@@ -191,6 +191,10 @@ def main() -> None:
     )
     threading.Thread(target=web_server.serve_forever, name="bambook-webapp", daemon=True).start()
     webapp_url = os.environ.get("WEBAPP_URL", "").strip()
+    if not webapp_url:
+        railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        if railway_domain:
+            webapp_url = f"https://{railway_domain.removeprefix('https://').rstrip('/')}"
     if webapp_url.startswith("https://") and "your-domain.example" not in webapp_url:
         try:
             telegram.call("setChatMenuButton", {
@@ -333,3 +337,4 @@ def main() -> None:
         except (HTTPError, URLError, TimeoutError) as error:
             log.warning("Polling failed: %s", error)
             time.sleep(3)
+
