@@ -45,6 +45,7 @@ def _itunes_search(query: str, limit: int) -> list[dict[str, str]]:
             "source": "Apple Music",
             "artwork": item.get("artworkUrl100", "").replace("100x100bb", "300x300bb"),
             "duration": _duration(item.get("trackTimeMillis")),
+            "preview_url": item.get("previewUrl", ""),
         }
         for item in payload.get("results", [])
         if item.get("trackName") and item.get("trackViewUrl")
@@ -179,3 +180,4 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 combined["links"] = links
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)
     return ranked[: limit * 2]
+
