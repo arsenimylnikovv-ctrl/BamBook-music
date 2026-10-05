@@ -20,7 +20,7 @@ Telegram-бот для поиска музыки, личной библиоте�
 
 ## Запуск
 
-Нужен Python 3.11+, Node.js и токен бота от [@BotFather](https://t.me/BotFather). Node.js используется `yt-dlp` для поиска на YouTube. Чтобы Mini App открывался из Telegram, приложению нужен публичный HTTPS-адрес; укажи его в `WEBAPP_URL`. Бот сам настроит кнопку меню при запуске. Дополнительно можно указать `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` для Spotify; без них поиск работает по Apple Music/iTunes и YouTube Music.
+Нужен Python 3.11+, Node.js и токен бота от [@BotFather](https://t.me/BotFather). Node.js используется `yt-dlp` для поиска на YouTube. На Railway Mini App использует домен из переменной `RAILWAY_PUBLIC_DOMAIN`; бот сам настраивает кнопку меню при запуске. Локально публичный адрес можно указать в `WEBAPP_URL`. Дополнительно можно указать `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` для Spotify; без них поиск работает по Apple Music/iTunes и YouTube Music.
 
 ```powershell
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
@@ -31,44 +31,42 @@ python -m bamboook
 
 Данные хранятся в SQLite (`data/bambook.sqlite3`). Веб-интерфейс и API Mini App обслуживает тот же процесс, что и бот; порт берётся из `PORT` или `WEBAPP_PORT` (по умолчанию 8080). Для контейнерного размещения используется `Dockerfile`, который устанавливает FFmpeg.
 
-## Публикация Mini App и бота
+## Публикация Mini App и бота на Railway
 
-`https://telegram-mini-app-development-seven.vercel.app` — отдельный макет, не сервер бота. У BamBook Mini App, API, Telegram-бот и база запускаются одним сервисом из этого репозитория. Render Blueprint описан в корневом `render.yaml`: Docker-сервис в регионе Frankfurt, постоянный диск для SQLite и HTTPS-адрес.
+`https://telegram-mini-app-development-seven.vercel.app` — только макет интерфейса, не сервер BamBook. Бот, API Mini App и библиотека запускаются одним Docker-сервисом из этого приватного репозитория. Railway выдаёт HTTPS-домен, бот автоматически использует `RAILWAY_PUBLIC_DOMAIN` для кнопки Mini App.
 
-### 1. Разреши Render читать приватный репозиторий
+### 1. Подключи приватный GitHub
 
-1. Войди в Render через GitHub на [render.com](https://render.com).
-2. Открой [установку приложения Render для GitHub](https://github.com/apps/render/installations/new) и выбери **Configure** для своего аккаунта.
-3. В **Repository access** добавь `arsenimylnikovv-ctrl/BamBook-music` (или разреши все репозитории). Это требуется после переключения репозитория в Private.
+1. Открой [railway.com](https://railway.com) и войди через GitHub.
+2. Создай **New Project → Deploy from GitHub repo**.
+3. Если Railway запросит разрешение GitHub, авторизуй приложение и разреши доступ к `arsenimylnikovv-ctrl/BamBook-music`.
+4. Выбери репозиторий и ветку `main`. Railway соберёт приложение из корневого `Dockerfile`.
 
-### 2. Создай сервис
+### 2. Добавь токен и постоянную базу
 
-1. В Render открой **New → Blueprint**.
-2. Выбери приватный `BamBook-music`, ветку `main` и файл `/render.yaml`, затем нажми **Apply**.
-3. При запросе значения `TELEGRAM_BOT_TOKEN` вставь токен из `@BotFather`. Оставь его только в секретных переменных Render — не в GitHub, не в сообщениях и не в `render.yaml`.
-4. Подтверди план сервиса и расход. В репозитории задан тариф `0.5c-512mb` и диск 1 GB; точную цену и валюту покажет Render перед созданием. Бесплатный Web Service здесь не подходит: он засыпает после простоя, не поддерживает persistent disk и теряет SQLite при перезапуске. Если тариф платный, проверь сумму и лимит расходов в Render перед подтверждением.
-5. Дождись статуса **Live**. В настройках сервиса открой **Environment** и убедись, что задан `TELEGRAM_BOT_TOKEN`; `DATABASE_PATH`, `WEBAPP_URL` и порт берутся из Blueprint/Render.
-6. В разделе **Events/Logs** проверь, что приложение стартовало без ошибки авторизации Telegram. Скопируй URL вида `https://bambook-....onrender.com` и открой `https://<этот-домен>/health`. Ответ должен быть `{"ok": true}`; главная страница по этому URL — и есть размещённый Mini App.
+1. Открой **Variables** сервиса → **New Variable**. Добавь `TELEGRAM_BOT_TOKEN` со значением токена от `@BotFather`. Не помещай его в GitHub или сообщения.
+2. Создай **Volume**, подключи его к сервису BamBook и задай **Mount Path** `/var/data`.
+3. Добавь переменную `DATABASE_PATH` со значением `/var/data/bambook.sqlite3`.
+4. Примени переменные и volume, затем запусти deploy. Volume сохраняет SQLite-библиотеку при перезапуске.
 
-### 3. Покажи Mini App в Telegram
+### 3. Выдай HTTPS-домен и проверь запуск
 
-При старте BamBook автоматически задаёт общую кнопку меню через Telegram Bot API, используя URL сервиса Render. Чтобы задать кнопку вручную или проверить её в `@BotFather`:
+1. Открой **Settings → Networking → Public Networking → Generate Domain** и создай домен вида `xxxxx.up.railway.app`.
+2. В настройках Deploy укажи **Healthcheck Path** `/health`.
+3. Примени настройки и запусти **Redeploy**, чтобы бот на старте увидел домен и установил кнопку меню Telegram.
+4. Проверь логи: сервис должен запуститься без ошибки токена. Открой `https://<твой-домен>.up.railway.app/health`; ожидаемый ответ — `{"ok": true}`. Адрес с `/` открывает Mini App.
 
-1. Открой `@BotFather` → `/mybots` → выбери BamBook → **Bot Settings → Menu Button → Configure menu button**.
-2. Укажи подпись `BamBook` и тот же HTTPS URL `https://<твой-сервис>.onrender.com` (без `/health`).
-3. Открой чат с ботом, нажми **Start** или отправь `/start`, затем кнопку **BamBook** рядом с полем ввода. Mini App должен открыться внутри Telegram.
-4. Для отдельной заметной кнопки запуска на профиле бота настрой в BotFather **Configure Main Mini App**; это необязательно, кнопки меню достаточно.
+### 4. Открой приложение в Telegram
 
-Если после этого видишь старый макет, проверь домен: нужно использовать URL Render, не ссылку Vercel. Если кнопки нет — смотри Render **Logs** на `Could not set Mini App menu button`; вручную сохрани URL через BotFather и перезапусти сервис после исправления токена.
+Бот автоматически задаёт кнопку меню. Чтобы проверить или указать её вручную: `@BotFather` → `/mybots` → BamBook → **Bot Settings → Menu Button → Configure menu button**. Задай подпись `BamBook` и HTTPS-домен Railway без `/health`. Затем открой бота, нажми **Start** или отправь `/start`, и открой кнопку возле поля ввода. Кнопку на профиле можно отдельно настроить через **Configure Main Mini App**, это необязательно.
 
-### 4. Дополнительный поиск
+Spotify подключается переменными `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` в Railway → **Variables**, после чего нужно развернуть сервис заново. Поиск Apple/iTunes и YouTube Music включён без этих ключей.
 
-Поиск Apple/iTunes и YouTube Music включён сразу. Spotify можно подключить в Render → сервис → **Environment**, добавив `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` из Spotify Developer Dashboard, затем сделать **Save, rebuild, and deploy**. Токен Telegram никому не отправляй; если случайно опубликовал его, перевыпусти в BotFather.
+### Стоимость
 
-Важно: поиск каталогов находит карточки и ссылки, но стриминговые API не отдают BamBook полные музыкальные файлы. AAC-LC/M4A перекодирование работает на отправленном боту аудио или разрешённой прямой ссылке на аудиофайл. Обычная ссылка Spotify/YouTube Music/Яндекс Музыки не превращается автоматически в скачиваемый файл.
+Railway даёт ограниченный бесплатный кредит для пробного запуска. Для постоянной работы рассчитывай минимум на план Hobby — **$5/месяц**, в который включено $5 потребления ресурсов; превышение оплачивается отдельно. Следи за usage и лимитом расходов в Railway. [Тарифы и правила оплаты Railway](https://docs.railway.com/pricing).
 
-Каталожный поиск возвращает карточки и ссылки на сервисы, а не полные музыкальные записи. Mini App может сохранять треки и ссылки в личной библиотеке; конвертация в AAC-LC/M4A работает для аудио, которое пользователь прислал боту, и для отдельно разрешённых прямых ссылок на файлы.
-
+Каталоги находят карточки и ссылки, но не передают BamBook полные музыкальные файлы. Конвертация в AAC-LC/M4A работает для аудио, отправленного боту, или разрешённой прямой ссылки на аудиофайл. Ссылки на страницы Spotify, YouTube Music и Яндекс Музыки не скачиваются автоматически.
 ## Структура
 
 - `bamboook/bot.py` — Telegram-команды, аудио и запуск веб-сервера.
@@ -80,4 +78,5 @@ python -m bamboook
 ## Дальше
 
 Реализовать чтение плейлистов через официальные API там, где это разрешено и доступно, затем настроить развёртывание и резервные копии SQLite.
+
 
