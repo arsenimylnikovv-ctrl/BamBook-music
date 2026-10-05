@@ -234,13 +234,43 @@ def main() -> None:
 
     while True:
         try:
-            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message"]'})
+            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message","pre_checkout_query","channel_post"]'})
             for update in updates:
                 offset = update["update_id"] + 1
+                if update.get("channel_post"):
+                    library.save_news_post(update["channel_post"])
+                    continue
+                checkout = update.get("pre_checkout_query")
+                if checkout:
+                    payload = str(checkout.get("invoice_payload", ""))
+                    payer_id = int(checkout.get("from", {}).get("id", 0))
+                    price = max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100"))))
+                    valid = (
+                        payload == f"bambook_plus:{payer_id}"
+                        and checkout.get("currency") == "XTR"
+                        and int(checkout.get("total_amount", 0)) == price
+                    )
+                    answer = {"pre_checkout_query_id": checkout["id"], "ok": "true" if valid else "false"}
+                    if not valid:
+                        answer["error_message"] = "Счёт устарел. Открой BamBook Plus и попробуй снова."
+                    telegram.call("answerPreCheckoutQuery", answer)
+                    continue
                 message = update.get("message", {})
                 chat = message.get("chat", {}).get("id")
                 user = message.get("from", {}).get("id")
                 if not chat or not user:
+                    continue
+                payment = message.get("successful_payment")
+                if payment:
+                    expected_payload = f"bambook_plus:{user}"
+                    expected_price = max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100"))))
+                    if payment.get("invoice_payload") != expected_payload or payment.get("currency") != "XTR" or int(payment.get("total_amount", 0)) != expected_price:
+                        log.warning("Ignoring unexpected successful payment from user %s", user)
+                        telegram.send(chat, "Платёж получен, но я не смог подтвердить подписку автоматически. Напиши /paysupport.")
+                        continue
+                    expires = int(payment.get("subscription_expiration_date") or (time.time() + 30 * 24 * 60 * 60))
+                    library.activate_premium(user, expires, str(payment.get("telegram_payment_charge_id", "")))
+                    telegram.send(chat, "BamBook Plus активирован ✨ Новостные каналы теперь без лимита.")
                     continue
                 media = message.get("audio") or message.get("voice")
                 document = message.get("document")
@@ -273,7 +303,25 @@ def main() -> None:
                     query = ""
                     audio_url = ""
                     if command in ("/start", "/help"):
-                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь запрос или просто напиши название. Доступные аудиопревью пришлю прямо сюда.\n/audio прямая_ссылка — конвертировать разрешённый файл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат поиска\n/library — моя коллекция\n/remove номер — удалить трек\n/playlists — мои плейлисты\n/playlist_new название — создать плейлист\n/playlist_add номер_плейлиста номер_трека — добавить трек из библиотеки\n/playlist_show номер — показать треки\n/playlist_remove номер_плейлиста номер_трека — убрать трек\n/playlist_delete номер — удалить плейлист")
+                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь запрос или просто напиши название. Доступные аудиопревью пришлю прямо сюда.\n/premium — BamBook Plus\n/paysupport — помощь с оплатой\n/audio прямая_ссылка — конвертировать разрешённый файл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат поиска\n/library — моя коллекция\n/remove номер — удалить трек\n/playlists — мои плейлисты\n/playlist_new название — создать плейлист\n/playlist_add номер_плейлиста номер_трека — добавить трек из библиотеки\n/playlist_show номер — показать треки\n/playlist_remove номер_плейлиста номер_трека — убрать трек\n/playlist_delete номер — удалить плейлист")
+                    elif command == "/premium":
+                        price = max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100"))))
+                        telegram.call("sendInvoice", {
+                            "chat_id": chat,
+                            "title": "BamBook Plus",
+                            "description": "Безлимитные новостные Telegram-каналы и дополнительные возможности BamBook на 1 месяц.",
+                            "payload": f"bambook_plus:{user}",
+                            "provider_token": "",
+                            "currency": "XTR",
+                            "prices": json.dumps([{"label": "BamBook Plus · 1 месяц", "amount": price}], ensure_ascii=False),
+                            "subscription_period": 2592000,
+                        })
+                    elif command == "/paysupport":
+                        support = os.environ.get("SUPPORT_USERNAME", "").strip()
+                        contact = f" Напиши {support} и приложи дату и скриншот платежа." if support else " Напиши администратору бота и приложи дату и скриншот платежа."
+                        telegram.send(chat, "Поддержка платежей." + contact + " Не отправляй коды входа или данные карты.")
+                    elif command == "/terms":
+                        telegram.send(chat, "BamBook Plus — цифровая подписка на дополнительные функции BamBook. Подписка оформляется в Telegram Stars на 30 дней и автоматически продлевается, пока её не отменить в настройках Telegram → Stars → Подписки. После отмены доступ остаётся до конца оплаченного периода. По вопросам оплаты: /paysupport")
                     elif command == "/search":
                         if not argument:
                             telegram.send(chat, "Напиши название трека или исполнителя — например: Kanye West Gold Digger")
@@ -411,7 +459,7 @@ def main() -> None:
                     elif command == "/import":
                         service = identify_service(argument) if argument else None
                         if not service:
-                            telegram.send(chat, "Пришли ссылку на плейлист или трек Spotify, Яндекс Музыки, YouTube Music, Apple Music или SoundCloud: /import ссылка")
+                            telegram.send(chat, "Пришли HTTPS-ссылку на трек, плейлист или аудиокнигу поддерживаемого сервиса: /import ссылка")
                         else:
                             added = library.save_import(user, service, argument)
                             telegram.send(chat, f"Ссылку {service} сохранил." if added else "Эта ссылка уже сохранена.")
@@ -433,4 +481,3 @@ def main() -> None:
         except (HTTPError, URLError, TimeoutError) as error:
             log.warning("Polling failed: %s", error)
             time.sleep(3)
-

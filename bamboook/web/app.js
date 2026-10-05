@@ -27,6 +27,7 @@
   let currentPlaylistTracks = [];
   let playlists = [];
   let selectedPlaylistId = null;
+  let accountState = null;
   let toastTimer;
 
   function applyTheme() {
@@ -184,6 +185,54 @@
     if (selectedPlaylistId) await openPlaylist(selectedPlaylistId);
   }
 
+  async function loadAccount() {
+    const account = await api("account");
+    accountState = account;
+    const plus = account.plan === "plus";
+    document.querySelector("#plan-name").textContent = plus ? "BamBook Plus" : "BamBook Free";
+    document.querySelector("#plan-description").textContent = plus
+      ? `Plus активен до ${new Date(account.premiumUntil * 1000).toLocaleDateString("ru-RU")}. Каналов без лимита.`
+      : "Музыка, плейлисты и до 3 новостных каналов.";
+    const premiumButton = document.querySelector("#premium-button");
+    premiumButton.textContent = plus ? "Plus активен" : `Подключить · ${account.premiumPriceStars} ⭐/мес`;
+    premiumButton.disabled = plus;
+    document.querySelector("#news-limit").textContent = plus
+      ? `BamBook Plus · каналов ${account.newsChannels.length}, без лимита.`
+      : `Бесплатно · ${account.newsChannels.length}/3 каналов.`;
+    document.querySelector("#news-channels-list").innerHTML = account.newsChannels.length
+      ? account.newsChannels.map((channel) => `<div class="import-item"><strong>${escapeHTML(channel.name)}</strong><button class="playlist-delete" data-remove-channel="${escapeHTML(channel.key)}" type="button">Убрать</button></div>`).join("")
+      : '<div class="empty-state"><h3>Каналов пока нет</h3><p>Добавь публичный Telegram-канал, чтобы сохранить его в источники.</p></div>';
+    const feed = account.newsFeed || [];
+    document.querySelector("#news-feed").innerHTML = feed.length
+      ? feed.map((post) => {
+        const link = safeLink(post.url);
+        const preview = post.text || "Медиа-публикация";
+        const timestamp = new Date(post.publishedAt * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+        return `<article class="news-post"><div><strong>${escapeHTML(post.channel)}</strong><time>${timestamp}</time></div><p>${escapeHTML(preview)}</p>`
+          + (link ? '<a href="' + escapeHTML(link) + '" target="_blank" rel="noopener noreferrer">Открыть пост</a>' : "")
+          + "</article>";
+      }).join("")
+      : '<p class="news-empty">Новые публикации появятся здесь после того, как добавишь BamBook в каналы. История до подключения недоступна.</p>';
+    document.querySelector("#connected-imports").innerHTML = account.imports.map((item) =>
+      `<div class="import-item"><strong>${escapeHTML(item.service)} · подборка сохранена</strong></div>`).join("");
+  }
+
+  async function purchasePremium() {
+    try {
+      const invoice = await api("premium_invoice");
+      if (tg?.openInvoice) {
+        tg.openInvoice(invoice.invoiceLink, (status) => {
+          if (status === "paid") {
+            showToast("Платёж принят. Обновляю BamBook Plus…");
+            setTimeout(() => loadAccount().catch((error) => showToast(error.message)), 1500);
+          } else if (status === "failed") showToast("Не удалось завершить оплату");
+        });
+      } else {
+        openLink(invoice.invoiceLink);
+      }
+    } catch (error) { showToast(error.message); }
+  }
+
   async function openPlaylist(playlistId) {
     const playlist = playlists.find((item) => Number(item.id) === Number(playlistId));
     if (!playlist) return;
@@ -292,6 +341,15 @@
       } catch (error) { showToast(error.message); }
       return;
     }
+    const removeChannel = event.target.closest("[data-remove-channel]");
+    if (removeChannel) {
+      try {
+        await api("remove_news_channel", { channelKey: removeChannel.dataset.removeChannel });
+        await loadAccount();
+        showToast("Канал удалён из источников");
+      } catch (error) { showToast(error.message); }
+      return;
+    }
     const saveButton = event.target.closest("[data-save]");
     if (saveButton) {
       const track = currentTracks[Number(saveButton.dataset.save)];
@@ -317,26 +375,41 @@
   function setView(view) {
     currentView = view;
     const library = view === "library";
+    const account = view === "account";
     navItems.forEach((item) => {
       const active = item.dataset.view === view;
       item.classList.toggle("active", active);
       if (active) item.setAttribute("aria-current", "page");
       else item.removeAttribute("aria-current");
     });
-    document.querySelector("#search-view").classList.toggle("hidden", library);
+    document.querySelector("#search-view").classList.toggle("hidden", library || account);
     document.querySelector("#library-view").classList.toggle("hidden", !library);
-    searchArea.classList.toggle("hidden", library);
+    document.querySelector("#account-view").classList.toggle("hidden", !account);
+    searchArea.classList.toggle("hidden", library || account);
     pageTitle.innerHTML = library
       ? 'Библиотека<span class="title-period">.</span>'
-      : 'Музыка<span class="title-period">.</span>';
+      : account ? 'Аккаунт<span class="title-period">.</span>' : 'Музыка<span class="title-period">.</span>';
     pageDescription.innerHTML = library
       ? "Всё, что ты сохранил,<br class=\"wide-only\" /> всегда под рукой."
-      : "Ищи любимые треки и собирай<br class=\"wide-only\" /> свою коллекцию в одном месте.";
+      : account ? "Подключай источники<br class=\"wide-only\" /> и управляй своим планом."
+        : "Ищи любимые треки и собирай<br class=\"wide-only\" /> свою коллекцию в одном месте.";
     if (library) loadLibrary();
+    if (account) loadAccount().catch((error) => showToast(error.message));
   }
 
   form.addEventListener("submit", (event) => { event.preventDefault(); search(queryInput.value); });
   document.querySelector("#playlist-form").addEventListener("submit", createPlaylist);
+  document.querySelector("#premium-button").addEventListener("click", purchasePremium);
+  document.querySelector("#news-channel-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = document.querySelector("#news-channel");
+    try {
+      const result = await api("add_news_channel", { channel: input.value.trim() });
+      input.value = "";
+      await loadAccount();
+      showToast(result.added ? "Канал сохранён" : "Этот канал уже добавлен");
+    } catch (error) { showToast(error.message); }
+  });
   document.body.addEventListener("change", async (event) => {
     const select = event.target.closest("[data-add-index]");
     if (!select || !select.value) return;
@@ -361,6 +434,7 @@
       showToast(result.saved ? `Ссылка ${result.service} сохранена` : "Эта ссылка уже в библиотеке");
       input.value = "";
       await loadLibrary();
+      await loadAccount();
     } catch (error) { showToast(error.message); }
     finally { if (button) button.disabled = false; }
   });
@@ -377,4 +451,3 @@
   if (!initData) showToast("Открой приложение из чата с BamBook");
   else loadLibrary();
 })();
-

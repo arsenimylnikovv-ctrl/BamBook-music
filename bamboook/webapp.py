@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import time
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
@@ -19,6 +21,19 @@ from .storage import Library
 
 WEB_ROOT = Path(__file__).with_name("web")
 log = logging.getLogger("bambook.webapp")
+
+
+def telegram_api(bot_token: str, method: str, parameters: dict) -> dict:
+    request = Request(
+        f"https://api.telegram.org/bot{bot_token}/{method}",
+        data=urlencode(parameters).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urlopen(request, timeout=20) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not result.get("ok"):
+        raise ValueError(result.get("description", "Telegram Bot API запрос завершился ошибкой"))
+    return result["result"]
 
 
 def validate_init_data(init_data: str, bot_token: str) -> int | None:
@@ -189,6 +204,67 @@ def make_handler(bot_token: str, database_path: str):
                         for row in library.list_imports(user_id)
                     ]
                     self._json(200, {"imports": imports})
+                elif action == "account":
+                    channels = library.list_news_channels(user_id)
+                    self._json(200, {
+                        "plan": "plus" if library.is_premium(user_id) else "free",
+                        "premiumUntil": library.premium_until(user_id),
+                        "premiumPriceStars": max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100")))),
+                        "newsChannelLimit": None if library.is_premium(user_id) else 3,
+                        "newsChannels": [{"key": key, "name": name} for key, name, _chat_id in channels],
+                        "imports": [{"id": row[0], "service": row[1]} for row in library.list_imports(user_id)],
+                        "newsFeed": [
+                            {"channel": row[0], "messageId": row[1], "text": row[2], "publishedAt": row[3], "url": row[4]}
+                            for row in library.list_news_feed(user_id)
+                        ],
+                    })
+                elif action == "add_news_channel":
+                    name = str(body.get("channel", ""))
+                    clean_name = name.strip().removeprefix("https://t.me/").removeprefix("http://t.me/").removeprefix("t.me/").strip("/@")
+                    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_name):
+                        self._json(400, {"error": "Укажи публичный канал: @название или t.me/название"})
+                        return
+                    chat = telegram_api(bot_token, "getChat", {"chat_id": "@" + clean_name})
+                    if chat.get("type") != "channel" or not chat.get("username"):
+                        self._json(400, {"error": "Нужен публичный Telegram-канал с адресом @username"})
+                        return
+                    bot_id = int(bot_token.split(":", 1)[0])
+                    try:
+                        membership = telegram_api(bot_token, "getChatMember", {"chat_id": chat["id"], "user_id": bot_id})
+                    except ValueError as error:
+                        log.info("Could not verify BamBook membership in a channel (%s)", error)
+                        self._json(400, {"error": "Не получилось проверить BamBook в канале. Добавь бота в канал как участника и повтори попытку."})
+                        return
+                    if membership.get("status") not in {"member", "administrator", "creator"}:
+                        self._json(400, {"error": "Сначала добавь BamBook в канал как участника, затем повтори подключение."})
+                        return
+                    canonical_name = chat["username"]
+                    added = library.add_news_channel(user_id, canonical_name, str(chat["id"]))
+                    self._json(200, {"added": added, "channel": "@" + canonical_name})
+                elif action == "remove_news_channel":
+                    key = str(body.get("channelKey", ""))
+                    self._json(200, {"removed": library.remove_news_channel(user_id, key)})
+                elif action == "premium_invoice":
+                    price = max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100"))))
+                    payload = f"bambook_plus:{user_id}"
+                    invoice_data = urlencode({
+                        "title": "BamBook Plus",
+                        "description": "Безлимитные новостные Telegram-каналы и дополнительные возможности BamBook на 1 месяц.",
+                        "payload": payload,
+                        "currency": "XTR",
+                        "prices": json.dumps([{"label": "BamBook Plus · 1 месяц", "amount": price}], ensure_ascii=False),
+                        "subscription_period": 2592000,
+                    }).encode()
+                    request = Request(
+                        f"https://api.telegram.org/bot{bot_token}/createInvoiceLink",
+                        data=invoice_data,
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    with urlopen(request, timeout=20) as response:
+                        invoice_result = json.loads(response.read().decode("utf-8"))
+                    if not invoice_result.get("ok"):
+                        raise ValueError(invoice_result.get("description", "Telegram не смог создать счёт"))
+                    self._json(200, {"invoiceLink": invoice_result["result"]})
                 elif action == "save":
                     track = body.get("track")
                     if not isinstance(track, dict):
@@ -216,7 +292,7 @@ def make_handler(bot_token: str, database_path: str):
                     url = str(body.get("url", "")).strip()
                     service = identify_service(url)
                     if not service or urlsplit(url).scheme != "https":
-                        self._json(400, {"error": "Пришли HTTPS-ссылку Spotify, Яндекс Музыки, YouTube Music, Apple Music или SoundCloud"})
+                        self._json(400, {"error": "Пришли HTTPS-ссылку на поддерживаемый музыкальный или аудиокнижный сервис"})
                         return
                     added = library.save_import(user_id, service, url[:1000])
                     self._json(200, {"saved": added, "service": service})
@@ -242,4 +318,3 @@ def start_webapp(bot_token: str, database_path: str, host: str = "0.0.0.0", port
     server = ThreadingHTTPServer((host, port), make_handler(bot_token, database_path))
     server.daemon_threads = True
     return server
-

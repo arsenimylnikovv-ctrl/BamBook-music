@@ -13,6 +13,12 @@ SERVICE_DOMAINS = {
     "youtu.be": "YouTube Music",
     "soundcloud.com": "SoundCloud",
     "music.apple.com": "Apple Music",
+    "litres.ru": "Литрес",
+    "storytel.com": "Storytel",
+    "bookmate.com": "Bookmate",
+    "mybook.ru": "MyBook",
+    "audible.com": "Audible",
+    "books.apple.com": "Apple Books",
 }
 
 

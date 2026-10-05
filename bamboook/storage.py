@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import re
+import time
 from pathlib import Path
 
 
@@ -47,9 +49,35 @@ class Library:
                     added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY(playlist_id, track_id)
                 );
+                CREATE TABLE IF NOT EXISTS user_subscriptions (
+                    user_id INTEGER PRIMARY KEY,
+                    premium_until INTEGER NOT NULL DEFAULT 0,
+                    latest_charge_id TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS news_channels (
+                    user_id INTEGER NOT NULL,
+                    channel_key TEXT NOT NULL,
+                    channel_name TEXT NOT NULL,
+                    chat_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(user_id, channel_key)
+                );
+                CREATE TABLE IF NOT EXISTS news_posts (
+                    chat_id TEXT NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    channel_name TEXT NOT NULL,
+                    published_at INTEGER NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    post_url TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(chat_id, message_id)
+                );
                 """
             )
             db.execute("PRAGMA foreign_keys=ON")
+            news_columns = {row[1] for row in db.execute("PRAGMA table_info(news_channels)")}
+            if "chat_id" not in news_columns:
+                db.execute("ALTER TABLE news_channels ADD COLUMN chat_id TEXT NOT NULL DEFAULT ''")
             columns = {row[1] for row in db.execute("PRAGMA table_info(tracks)")}
             if "artwork" not in columns:
                 db.execute("ALTER TABLE tracks ADD COLUMN artwork TEXT NOT NULL DEFAULT ''")
@@ -66,6 +94,103 @@ class Library:
         db = sqlite3.connect(self.path)
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def is_premium(self, user_id: int, now: int | None = None) -> bool:
+        current = int(time.time()) if now is None else now
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT premium_until FROM user_subscriptions WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            return bool(row and int(row[0]) > current)
+
+    def premium_until(self, user_id: int) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT premium_until FROM user_subscriptions WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    def activate_premium(self, user_id: int, premium_until: int, charge_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO user_subscriptions(user_id,premium_until,latest_charge_id) VALUES(?,?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET premium_until=MAX(user_subscriptions.premium_until,excluded.premium_until), "
+                "latest_charge_id=excluded.latest_charge_id,updated_at=CURRENT_TIMESTAMP",
+                (user_id, premium_until, charge_id[:255]),
+            )
+
+    def list_news_channels(self, user_id: int) -> list[tuple[str, str, str]]:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT channel_key,channel_name,chat_id FROM news_channels WHERE user_id=? ORDER BY created_at,channel_key",
+                (user_id,),
+            ).fetchall()
+
+    def add_news_channel(self, user_id: int, channel_name: str, chat_id: str = "") -> bool:
+        name = channel_name.strip().removeprefix("https://t.me/").removeprefix("t.me/").strip("/@")
+        if not name or not re.fullmatch(r"[A-Za-z0-9_]{5,32}", name):
+            raise ValueError("Укажи публичный Telegram-канал, например @bbcnews или t.me/bbcnews")
+        channel_key = name.casefold()
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT premium_until FROM user_subscriptions WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            is_premium = bool(row and int(row[0]) > int(time.time()))
+            existing = db.execute(
+                "SELECT 1 FROM news_channels WHERE user_id=? AND channel_key=?",
+                (user_id, channel_key),
+            ).fetchone()
+            if existing:
+                return False
+            count = db.execute(
+                "SELECT COUNT(*) FROM news_channels WHERE user_id=?", (user_id,)
+            ).fetchone()[0]
+            if not is_premium and count >= 3:
+                raise ValueError("В бесплатном плане можно добавить до 3 Telegram-каналов. BamBook Plus снимет это ограничение.")
+            db.execute(
+                "INSERT INTO news_channels(user_id,channel_key,channel_name,chat_id) VALUES(?,?,?,?)",
+                (user_id, channel_key, "@" + name, str(chat_id)),
+            )
+            return True
+
+    def save_news_post(self, post: dict) -> None:
+        chat = post.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        message_id = int(post.get("message_id", 0))
+        if not chat_id or not message_id:
+            return
+        channel_name = "@" + str(chat.get("username") or chat.get("title") or "Telegram")
+        post_url = f"https://t.me/{chat['username']}/{message_id}" if chat.get("username") else ""
+        content = str(post.get("text") or post.get("caption") or "").strip()
+        if not content and post.get("photo"):
+            content = "Фото"
+        if not content and post.get("video"):
+            content = "Видео"
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO news_posts(chat_id,message_id,channel_name,published_at,text,post_url) VALUES(?,?,?,?,?,?)",
+                (chat_id, message_id, channel_name[:200], int(post.get("date", time.time())), content[:6000], post_url[:1000]),
+            )
+
+    def list_news_feed(self, user_id: int, limit: int = 40) -> list[tuple[str, int, str, int, str, str]]:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT n.channel_name,n.message_id,n.text,n.published_at,n.post_url,n.chat_id "
+                "FROM news_posts n JOIN news_channels c ON c.chat_id=n.chat_id "
+                "WHERE c.user_id=? ORDER BY n.published_at DESC,n.message_id DESC LIMIT ?",
+                (user_id, max(1, min(100, limit))),
+            ).fetchall()
+
+    def remove_news_channel(self, user_id: int, channel_key: str) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                "DELETE FROM news_channels WHERE user_id=? AND channel_key=?",
+                (user_id, channel_key.casefold()),
+            )
+            return cursor.rowcount > 0
 
     def save_track(self, user_id: int, track: dict[str, str]) -> bool:
         with self._connect() as db:
@@ -167,4 +292,3 @@ class Library:
         with self._connect() as db:
             cursor = db.execute("DELETE FROM tracks WHERE user_id=? AND id=?", (user_id, track_id))
             return cursor.rowcount > 0
-
