@@ -118,6 +118,9 @@ def make_handler(bot_token: str, database_path: str):
                     tracks = search_tracks(query, limit=8)
                     for track in tracks:
                         track.pop("links", None)
+                        # Keep Jamendo download URLs private to the bot's audio
+                        # delivery path; the Mini App only needs catalog metadata.
+                        track.pop("download_url", None)
                     self._json(200, {"tracks": tracks})
                 elif action == "library":
                     tracks = [

@@ -176,6 +176,28 @@ def download_apple_preview(url: str) -> bytes:
     return data
 
 
+def download_jamendo_track(url: str) -> bytes:
+    """Fetch a Jamendo track only from Jamendo's own download CDN."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() != "prod-1.storage.jamendo.com":
+        raise ValueError("Jamendo returned an unexpected download host")
+    request = Request(url, headers={"User-Agent": "BamBook/0.1"})
+    with urlopen(request, timeout=45) as response:
+        final = urlsplit(response.geturl())
+        final_host = (final.hostname or "").lower()
+        if final.scheme != "https" or not (final_host == "jamendo.com" or final_host.endswith(".jamendo.com")):
+            raise ValueError("Jamendo download redirected to an unexpected host")
+        content_type = response.headers.get_content_type()
+        if not content_type.startswith("audio/") and content_type != "application/octet-stream":
+            raise ValueError("Jamendo did not return an audio file")
+        if int(response.headers.get("Content-Length", "0") or 0) > 20 * 1024 * 1024:
+            raise ValueError("Audio exceeds Telegram's 20 MB download limit")
+        data = response.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024:
+        raise ValueError("Audio exceeds Telegram's 20 MB download limit")
+    return data
+
+
 def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook") -> None:
     temp_dir, output_path = transcode_to_m4a(audio_data, title)
     try:
@@ -348,23 +370,32 @@ def main() -> None:
                         if not results:
                             telegram.send(chat, "Не нашёл совпадений в подключённых каталогах. Попробуй уточнить запрос.")
                         else:
-                            previews = [(index, track) for index, track in enumerate(results, 1) if track.get("preview_url")][:3]
-                            if previews:
-                                telegram.send(chat, f"Нашёл {len(results)} совпадений. Вот официальные аудиофрагменты из каталога Apple Music:")
-                                for index, track in previews:
+                            audio_results = [
+                                (index, track) for index, track in enumerate(results, 1)
+                                if track.get("download_url") or track.get("preview_url")
+                            ][:3]
+                            sent = 0
+                            if audio_results:
+                                telegram.send(chat, "Нашёл аудио, которое можно отправить файлом:")
+                                for index, track in audio_results:
                                     try:
                                         telegram.send(chat, f"{index}. {track['title']} — {track['artist']}")
-                                        audio_data = download_apple_preview(track["preview_url"])
+                                        audio_data = (
+                                            download_jamendo_track(track["download_url"])
+                                            if track.get("download_url")
+                                            else download_apple_preview(track["preview_url"])
+                                        )
                                         convert_and_send(telegram, chat, audio_data, track["title"], track["artist"])
+                                        sent += 1
                                     except Exception as error:
-                                        log.warning("Could not send Apple preview (%s)", type(error).__name__)
-                                telegram.send(chat, "Чтобы сохранить трек, отправь /save с его номером выше. Превью — короткий фрагмент, каталог не выдаёт полные записи.")
+                                        log.warning("Could not send catalog audio (%s)", type(error).__name__)
+                                telegram.send(chat, "Чтобы сохранить результат в библиотеку, отправь /save и его номер." if sent else "Не удалось получить аудиофайл. Попробуй другой запрос или отправь свой аудиофайл.")
                             else:
                                 top = "\n".join(
                                     f"{index}. {track['title']} — {track['artist']}"
                                     for index, track in enumerate(results[:5], 1)
                                 )
-                                telegram.send(chat, "Нашёл совпадения, но каталоги не предоставили для них аудиопревью.\n\n" + top + "\n\nПолную запись нельзя получить из обычной ссылки Spotify/YouTube/Apple. Пришли боту свой аудиофайл — я перекодирую его в AAC-LC M4A.")
+                                telegram.send(chat, "Не нашёл в подключённых источниках аудиофайла, который можно отправить.\n\n" + top + "\n\nСсылки не отправляю. Попробуй другой запрос или пришли свой аудиофайл.")
                     elif command == "/save":
                         if not argument.isdigit() or not 1 <= int(argument) <= len(pending.get(user, [])):
                             telegram.send(chat, "Сначала найди трек командой /search, затем укажи его номер: /save 1")

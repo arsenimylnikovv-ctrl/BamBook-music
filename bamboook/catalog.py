@@ -52,6 +52,52 @@ def _itunes_search(query: str, limit: int) -> list[dict[str, str]]:
     ]
 
 
+def _jamendo_search(query: str, limit: int) -> list[dict[str, str]]:
+    """Find tracks Jamendo explicitly allows apps to download.
+
+    Only CC0 tracks are eligible, avoiding non-commercial, no-derivatives,
+    and attribution-link conditions for redistributed converted audio.
+    """
+    client_id = os.environ.get("JAMENDO_CLIENT_ID", "").strip()
+    if not client_id:
+        return []
+    params = urlencode({
+        "client_id": client_id,
+        "format": "json",
+        "search": query,
+        "limit": max(1, min(limit * 3, 30)),
+        "type": "single albumtrack",
+        "order": "relevance",
+        "audioformat": "mp32",
+        "audiodlformat": "mp32",
+        "include": "licenses",
+        "ccnc": "false",
+        "ccnd": "false",
+    })
+    payload = _json_request(
+        f"https://api.jamendo.com/v3.0/tracks/?{params}",
+        {"User-Agent": "BamBook/0.1"},
+    )
+    tracks = []
+    for item in payload.get("results", []):
+        license_url = (item.get("license_ccurl") or "").lower()
+        cc0 = "creativecommons.org/publicdomain/zero/" in license_url
+        if not item.get("audiodownload_allowed") or not item.get("audiodownload") or not cc0:
+            continue
+        tracks.append({
+            "title": item.get("name", "Unknown track"),
+            "artist": item.get("artist_name", "Unknown artist"),
+            "album": item.get("album_name", ""),
+            "url": item.get("shareurl", ""),
+            "source": "Jamendo",
+            "artwork": item.get("image", ""),
+            "duration": _duration((item.get("duration") or 0) * 1000),
+            "download_url": item["audiodownload"],
+            "license": "CC0",
+        })
+    return tracks
+
+
 def _get_spotify_token() -> str | None:
     global _spotify_token, _spotify_token_expires
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
@@ -151,7 +197,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     if not query:
         return []
 
-    providers = (_itunes_search, _spotify_search, _youtube_search)
+    providers = (_itunes_search, _spotify_search, _youtube_search, _jamendo_search)
     results: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = [executor.submit(provider, query, limit) for provider in providers]
@@ -181,9 +227,8 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 combined.update(track)
                 combined["links"] = links
             else:
-                for field in ("preview_url", "youtube_id", "spotify_id"):
+                for field in ("preview_url", "youtube_id", "spotify_id", "download_url", "license"):
                     if not combined.get(field) and track.get(field):
                         combined[field] = track[field]
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)
     return ranked[: limit * 2]
-
