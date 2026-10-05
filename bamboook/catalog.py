@@ -93,6 +93,7 @@ def _jamendo_search(query: str, limit: int) -> list[dict[str, str]]:
             "artwork": item.get("image", ""),
             "duration": _duration((item.get("duration") or 0) * 1000),
             "download_url": item["audiodownload"],
+            "jamendo_id": str(item.get("id", "")),
             "license": "CC0",
         })
     return tracks
@@ -227,7 +228,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 combined.update(track)
                 combined["links"] = links
             else:
-                for field in ("preview_url", "youtube_id", "spotify_id", "download_url", "license"):
+                for field in ("preview_url", "youtube_id", "spotify_id", "download_url", "jamendo_id", "license"):
                     if not combined.get(field) and track.get(field):
                         combined[field] = track[field]
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)

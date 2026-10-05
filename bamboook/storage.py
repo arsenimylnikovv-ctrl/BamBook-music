@@ -89,6 +89,8 @@ class Library:
                 db.execute("ALTER TABLE tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''")
             if "spotify_id" not in columns:
                 db.execute("ALTER TABLE tracks ADD COLUMN spotify_id TEXT NOT NULL DEFAULT ''")
+            if "jamendo_id" not in columns:
+                db.execute("ALTER TABLE tracks ADD COLUMN jamendo_id TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path)
@@ -196,15 +198,16 @@ class Library:
     def save_track(self, user_id: int, track: dict[str, str]) -> bool:
         with self._connect() as db:
             cursor = db.execute(
-                "INSERT OR IGNORE INTO tracks(user_id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (user_id, track["title"], track["artist"], track.get("album", ""), track["url"], track.get("source", ""), track.get("artwork", ""), track.get("duration", ""), track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", "")),
+                "INSERT OR IGNORE INTO tracks(user_id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id,jamendo_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (user_id, track["title"], track["artist"], track.get("album", ""), track["url"], track.get("source", ""), track.get("artwork", ""), track.get("duration", ""), track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), track.get("jamendo_id", "")),
             )
             db.execute(
                 "UPDATE tracks SET preview_url=CASE WHEN preview_url='' THEN ? ELSE preview_url END, "
                 "youtube_id=CASE WHEN youtube_id='' THEN ? ELSE youtube_id END, "
-                "spotify_id=CASE WHEN spotify_id='' THEN ? ELSE spotify_id END "
+                "spotify_id=CASE WHEN spotify_id='' THEN ? ELSE spotify_id END, "
+                "jamendo_id=CASE WHEN jamendo_id='' THEN ? ELSE jamendo_id END "
                 "WHERE user_id=? AND url=?",
-                (track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), user_id, track["url"]),
+                (track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), track.get("jamendo_id", ""), user_id, track["url"]),
             )
             return cursor.rowcount > 0
 
@@ -216,10 +219,10 @@ class Library:
             )
             return cursor.rowcount > 0
 
-    def list_tracks(self, user_id: int) -> list[tuple[int, str, str, str, str, str, str, str, str, str, str]]:
+    def list_tracks(self, user_id: int) -> list[tuple]:
         with self._connect() as db:
             return db.execute(
-                "SELECT id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id FROM tracks WHERE user_id=? ORDER BY id DESC",
+                "SELECT id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id,jamendo_id FROM tracks WHERE user_id=? ORDER BY id DESC",
                 (user_id,),
             ).fetchall()
 
@@ -244,24 +247,25 @@ class Library:
             if not playlist:
                 raise ValueError("Плейлист не найден.")
             db.execute(
-                "INSERT OR IGNORE INTO tracks(user_id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (user_id, track["title"], track["artist"], track.get("album", ""), track["url"], track.get("source", ""), track.get("artwork", ""), track.get("duration", ""), track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", "")),
+                "INSERT OR IGNORE INTO tracks(user_id,title,artist,album,url,source,artwork,duration,preview_url,youtube_id,spotify_id,jamendo_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (user_id, track["title"], track["artist"], track.get("album", ""), track["url"], track.get("source", ""), track.get("artwork", ""), track.get("duration", ""), track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), track.get("jamendo_id", "")),
             )
             db.execute(
                 "UPDATE tracks SET preview_url=CASE WHEN preview_url='' THEN ? ELSE preview_url END, "
                 "youtube_id=CASE WHEN youtube_id='' THEN ? ELSE youtube_id END, "
-                "spotify_id=CASE WHEN spotify_id='' THEN ? ELSE spotify_id END "
+                "spotify_id=CASE WHEN spotify_id='' THEN ? ELSE spotify_id END, "
+                "jamendo_id=CASE WHEN jamendo_id='' THEN ? ELSE jamendo_id END "
                 "WHERE user_id=? AND url=?",
-                (track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), user_id, track["url"]),
+                (track.get("preview_url", ""), track.get("youtube_id", ""), track.get("spotify_id", ""), track.get("jamendo_id", ""), user_id, track["url"]),
             )
             saved = db.execute("SELECT id FROM tracks WHERE user_id=? AND url=?", (user_id, track["url"])).fetchone()
             cursor = db.execute("INSERT OR IGNORE INTO playlist_tracks(playlist_id,track_id) VALUES(?,?)", (playlist_id, saved[0]))
             return saved is not None, cursor.rowcount > 0
 
-    def list_playlist_tracks(self, user_id: int, playlist_id: int) -> list[tuple[int, str, str, str, str, str, str, str, str, str, str]]:
+    def list_playlist_tracks(self, user_id: int, playlist_id: int) -> list[tuple]:
         with self._connect() as db:
             return db.execute(
-                "SELECT t.id,t.title,t.artist,t.album,t.url,t.source,t.artwork,t.duration,t.preview_url,t.youtube_id,t.spotify_id "
+                "SELECT t.id,t.title,t.artist,t.album,t.url,t.source,t.artwork,t.duration,t.preview_url,t.youtube_id,t.spotify_id,t.jamendo_id "
                 "FROM playlist_tracks pt JOIN tracks t ON t.id=pt.track_id "
                 "JOIN playlists p ON p.id=pt.playlist_id WHERE p.user_id=? AND p.id=? ORDER BY pt.added_at,pt.rowid",
                 (user_id, playlist_id),

@@ -108,6 +108,44 @@ def make_handler(bot_token: str, database_path: str):
                 if user_id is None:
                     self._json(401, {"error": "Open BamBook from Telegram to continue"})
                     return
+                if body.get("action") == "play_jamendo":
+                    track_id = str(body.get("jamendoId", ""))
+                    client_id = os.environ.get("JAMENDO_CLIENT_ID", "").strip()
+                    if not client_id or not re.fullmatch(r"\d{1,12}", track_id):
+                        self._json(400, {"error": "Полный файл для этого трека недоступен"})
+                        return
+                    params = urlencode({
+                        "client_id": client_id, "format": "json", "id": track_id,
+                        "include": "licenses", "audioformat": "mp32", "audiodlformat": "mp32",
+                    })
+                    request = Request(f"https://api.jamendo.com/v3.0/tracks/?{params}", headers={"User-Agent": "BamBook/0.1"})
+                    with urlopen(request, timeout=12) as response:
+                        catalog = json.loads(response.read().decode("utf-8"))
+                    tracks = catalog.get("results", [])
+                    if not tracks:
+                        self._json(404, {"error": "Трек не найден в Jamendo"})
+                        return
+                    track = tracks[0]
+                    license_url = (track.get("license_ccurl") or "").lower()
+                    audio_url = track.get("audiodownload", "")
+                    parsed_audio = urlsplit(audio_url)
+                    if not track.get("audiodownload_allowed") or "creativecommons.org/publicdomain/zero/" not in license_url or parsed_audio.scheme != "https" or (parsed_audio.hostname or "").lower() != "prod-1.storage.jamendo.com":
+                        self._json(403, {"error": "У правообладателя нет разрешённого полного аудио"})
+                        return
+                    audio_request = Request(audio_url, headers={"User-Agent": "BamBook/0.1"})
+                    with urlopen(audio_request, timeout=45) as response:
+                        final = urlsplit(response.geturl())
+                        final_host = (final.hostname or "").lower()
+                        content_type = response.headers.get_content_type()
+                        if final.scheme != "https" or not (final_host == "jamendo.com" or final_host.endswith(".jamendo.com")) or (not content_type.startswith("audio/") and content_type != "application/octet-stream"):
+                            self._json(502, {"error": "Источник вернул неподдерживаемый аудиоформат"})
+                            return
+                        audio_data = response.read(20 * 1024 * 1024 + 1)
+                    if len(audio_data) > 20 * 1024 * 1024:
+                        self._json(413, {"error": "Аудиофайл слишком большой"})
+                        return
+                    self._respond(200, audio_data, "audio/mpeg")
+                    return
                 action = body.get("action")
                 library = Library(database_path)
                 if action == "search":
@@ -121,10 +159,11 @@ def make_handler(bot_token: str, database_path: str):
                         # Keep Jamendo download URLs private to the bot's audio
                         # delivery path; the Mini App only needs catalog metadata.
                         track.pop("download_url", None)
+                        track.pop("audio_url", None)
                     self._json(200, {"tracks": tracks})
                 elif action == "library":
                     tracks = [
-                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11]}
                         for row in library.list_tracks(user_id)
                     ]
                     self._json(200, {"tracks": tracks})
@@ -144,7 +183,7 @@ def make_handler(bot_token: str, database_path: str):
                         self._json(404, {"error": "Плейлист не найден"})
                         return
                     tracks = [
-                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11]}
                         for row in library.list_playlist_tracks(user_id, playlist_id)
                     ]
                     self._json(200, {"tracks": tracks})
@@ -188,6 +227,7 @@ def make_handler(bot_token: str, database_path: str):
                         "artwork": str(track.get("artwork", ""))[:1000] if urlsplit(str(track.get("artwork", ""))).scheme == "https" else "",
                         "duration": str(track.get("duration", ""))[:12],
                         "preview_url": str(track.get("preview_url", ""))[:1000],
+                        "jamendo_id": str(track.get("jamendo_id", "")) if re.fullmatch(r"\d{1,12}", str(track.get("jamendo_id", ""))) else "",
                         "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
                         "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
                     }
@@ -288,6 +328,7 @@ def make_handler(bot_token: str, database_path: str):
                         "artwork": str(track.get("artwork", ""))[:1000] if urlsplit(str(track.get("artwork", ""))).scheme == "https" else "",
                         "duration": str(track.get("duration", ""))[:12],
                         "preview_url": str(track.get("preview_url", ""))[:1000],
+                        "jamendo_id": str(track.get("jamendo_id", "")) if re.fullmatch(r"\d{1,12}", str(track.get("jamendo_id", ""))) else "",
                         "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
                         "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
                     }

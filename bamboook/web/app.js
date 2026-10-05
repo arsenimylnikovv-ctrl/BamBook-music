@@ -18,7 +18,6 @@
   const playlistTracksView = document.querySelector("#playlist-tracks");
   const miniPlayer = document.querySelector("#mini-player");
   const audioPlayer = document.querySelector("#audio-player");
-  const youtubePlayer = document.querySelector("#youtube-player");
   const pageTitle = document.querySelector("#page-title");
   const pageDescription = document.querySelector("#page-description");
   let currentView = "search";
@@ -29,6 +28,7 @@
   let selectedPlaylistId = null;
   let accountState = null;
   let toastTimer;
+  let currentAudioObjectUrl = "";
 
   function applyTheme() {
     const theme = tg?.colorScheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
@@ -94,9 +94,10 @@
   function card(track, index, { kind = "search", playlistId = null } = {}) {
     const art = safeLink(track.artwork);
     const hasPreview = Boolean(safePreview(track.preview_url));
-    const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
-    const hasSpotify = /^[A-Za-z0-9]{22}$/.test(track.spotify_id || "");
-    const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${hasPreview || hasYoutube || hasSpotify ? "" : "disabled"}>${hasPreview || hasYoutube || hasSpotify ? "▶ Слушать" : "Нет плеера"}</button>`;
+    const hasFullAudio = /^\d{1,12}$/.test(String(track.jamendo_id || ""));
+    const canPlay = hasFullAudio || hasPreview;
+    const playLabel = hasFullAudio ? "▶ Полный трек" : hasPreview ? "▶ Превью" : "Нет аудио";
+    const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
     let action = "";
     if (kind === "search") {
       const options = playlists.map((item) => `<option value="${Number(item.id)}">${escapeHTML(item.name)}</option>`).join("");
@@ -261,36 +262,44 @@
     } catch (error) { showToast(error.message); }
   }
 
-  function playTrack(track) {
+  async function playTrack(track) {
     const preview = safePreview(track?.preview_url);
-    const youtubeId = /^[A-Za-z0-9_-]{6,20}$/.test(track?.youtube_id || "") ? track.youtube_id : "";
-    const spotifyId = /^[A-Za-z0-9]{22}$/.test(track?.spotify_id || "") ? track.spotify_id : "";
-    if (!preview && !youtubeId && !spotifyId) { showToast("Для этого результата нет доступного проигрывателя"); return; }
+    const jamendoId = /^\d{1,12}$/.test(String(track?.jamendo_id || "")) ? String(track.jamendo_id) : "";
+    if (!preview && !jamendoId) { showToast("Встроенное аудио для этого результата недоступно"); return; }
     document.querySelector("#player-title").textContent = track.title;
     document.querySelector("#player-artist").textContent = track.artist;
     miniPlayer.classList.add("active");
     audioPlayer.pause();
-    if (preview) {
-      youtubePlayer.src = "about:blank";
-      youtubePlayer.classList.add("hidden");
-      audioPlayer.classList.remove("hidden");
-      miniPlayer.classList.remove("youtube", "spotify");
-      audioPlayer.src = preview;
-      audioPlayer.play().catch(() => showToast("Нажми ▶ в плеере, чтобы начать прослушивание"));
-    } else {
+    if (currentAudioObjectUrl) {
+      URL.revokeObjectURL(currentAudioObjectUrl);
+      currentAudioObjectUrl = "";
+    }
+    audioPlayer.classList.remove("hidden");
+    miniPlayer.classList.remove("youtube", "spotify");
+    if (jamendoId) {
       audioPlayer.removeAttribute("src");
       audioPlayer.load();
-      audioPlayer.classList.add("hidden");
-      youtubePlayer.classList.remove("hidden");
-      if (youtubeId) {
-        miniPlayer.classList.add("youtube");
-        miniPlayer.classList.remove("spotify");
-        youtubePlayer.src = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&playsinline=1`;
-      } else {
-        miniPlayer.classList.add("spotify");
-        miniPlayer.classList.remove("youtube");
-        youtubePlayer.src = `https://open.spotify.com/embed/track/${spotifyId}?utm_source=generator`;
+      showToast("Загружаю полный трек…");
+      try {
+        const response = await fetch("/api/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "play_jamendo", jamendoId, initData }),
+        });
+        if (!response.ok) {
+          let message = "Не удалось загрузить аудио";
+          try { message = (await response.json()).error || message; } catch {}
+          throw new Error(message);
+        }
+        currentAudioObjectUrl = URL.createObjectURL(await response.blob());
+        audioPlayer.src = currentAudioObjectUrl;
+        await audioPlayer.play();
+      } catch (error) {
+        showToast(error.message || "Не удалось загрузить полный трек");
       }
+    } else {
+      audioPlayer.src = preview;
+      audioPlayer.play().catch(() => showToast("Нажми ▶ в плеере, чтобы начать прослушивание"));
     }
   }
 
