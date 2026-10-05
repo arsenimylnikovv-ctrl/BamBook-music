@@ -270,7 +270,7 @@ def main() -> None:
                         continue
                     expires = int(payment.get("subscription_expiration_date") or (time.time() + 30 * 24 * 60 * 60))
                     library.activate_premium(user, expires, str(payment.get("telegram_payment_charge_id", "")))
-                    telegram.send(chat, "BamBook Plus активирован ✨ Новостные каналы теперь без лимита.")
+                    telegram.send(chat, "BamBook Plus активирован ✨ Новостные каналы без лимита, архив — 90 дней.")
                     continue
                 media = message.get("audio") or message.get("voice")
                 document = message.get("document")
@@ -309,7 +309,7 @@ def main() -> None:
                         telegram.call("sendInvoice", {
                             "chat_id": chat,
                             "title": "BamBook Plus",
-                            "description": "Безлимитные новостные Telegram-каналы и дополнительные возможности BamBook на 1 месяц.",
+                            "description": "Безлимитные новостные Telegram-каналы и архив новостей за 90 дней на 1 месяц.",
                             "payload": f"bambook_plus:{user}",
                             "provider_token": "",
                             "currency": "XTR",

@@ -191,14 +191,14 @@
     const plus = account.plan === "plus";
     document.querySelector("#plan-name").textContent = plus ? "BamBook Plus" : "BamBook Free";
     document.querySelector("#plan-description").textContent = plus
-      ? `Plus активен до ${new Date(account.premiumUntil * 1000).toLocaleDateString("ru-RU")}. Каналов без лимита.`
-      : "Музыка, плейлисты и до 3 новостных каналов.";
+      ? `Plus активен до ${new Date(account.premiumUntil * 1000).toLocaleDateString("ru-RU")}. Каналы без лимита, архив новостей 90 дней.`
+      : "Музыка и плейлисты без лимита, до 3 каналов и архив новостей за 7 дней.";
     const premiumButton = document.querySelector("#premium-button");
     premiumButton.textContent = plus ? "Plus активен" : `Подключить · ${account.premiumPriceStars} ⭐/мес`;
     premiumButton.disabled = plus;
     document.querySelector("#news-limit").textContent = plus
-      ? `BamBook Plus · каналов ${account.newsChannels.length}, без лимита.`
-      : `Бесплатно · ${account.newsChannels.length}/3 каналов.`;
+      ? `BamBook Plus · ${account.newsChannels.length} каналов без лимита · архив ${account.newsHistoryDays} дней.`
+      : `Бесплатно · ${account.newsChannels.length}/3 каналов · архив ${account.newsHistoryDays} дней.`;
     document.querySelector("#news-channels-list").innerHTML = account.newsChannels.length
       ? account.newsChannels.map((channel) => `<div class="import-item"><strong>${escapeHTML(channel.name)}</strong><button class="playlist-delete" data-remove-channel="${escapeHTML(channel.key)}" type="button">Убрать</button></div>`).join("")
       : '<div class="empty-state"><h3>Каналов пока нет</h3><p>Добавь публичный Telegram-канал, чтобы сохранить его в источники.</p></div>';

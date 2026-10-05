@@ -206,16 +206,18 @@ def make_handler(bot_token: str, database_path: str):
                     self._json(200, {"imports": imports})
                 elif action == "account":
                     channels = library.list_news_channels(user_id)
+                    is_plus = library.is_premium(user_id)
                     self._json(200, {
-                        "plan": "plus" if library.is_premium(user_id) else "free",
+                        "plan": "plus" if is_plus else "free",
                         "premiumUntil": library.premium_until(user_id),
                         "premiumPriceStars": max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100")))),
-                        "newsChannelLimit": None if library.is_premium(user_id) else 3,
+                        "newsChannelLimit": None if is_plus else 3,
+                        "newsHistoryDays": 90 if is_plus else 7,
                         "newsChannels": [{"key": key, "name": name} for key, name, _chat_id in channels],
                         "imports": [{"id": row[0], "service": row[1]} for row in library.list_imports(user_id)],
                         "newsFeed": [
                             {"channel": row[0], "messageId": row[1], "text": row[2], "publishedAt": row[3], "url": row[4]}
-                            for row in library.list_news_feed(user_id)
+                            for row in library.list_news_feed(user_id, days=90 if is_plus else 7)
                         ],
                     })
                 elif action == "add_news_channel":
@@ -249,7 +251,7 @@ def make_handler(bot_token: str, database_path: str):
                     payload = f"bambook_plus:{user_id}"
                     invoice_data = urlencode({
                         "title": "BamBook Plus",
-                        "description": "Безлимитные новостные Telegram-каналы и дополнительные возможности BamBook на 1 месяц.",
+                        "description": "Безлимитные новостные Telegram-каналы и архив новостей за 90 дней на 1 месяц.",
                         "payload": payload,
                         "currency": "XTR",
                         "prices": json.dumps([{"label": "BamBook Plus · 1 месяц", "amount": price}], ensure_ascii=False),

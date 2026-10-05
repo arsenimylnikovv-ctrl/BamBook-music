@@ -175,13 +175,14 @@ class Library:
                 (chat_id, message_id, channel_name[:200], int(post.get("date", time.time())), content[:6000], post_url[:1000]),
             )
 
-    def list_news_feed(self, user_id: int, limit: int = 40) -> list[tuple[str, int, str, int, str, str]]:
+    def list_news_feed(self, user_id: int, limit: int = 40, days: int | None = None) -> list[tuple[str, int, str, int, str, str]]:
         with self._connect() as db:
+            cutoff = int(time.time()) - days * 86400 if days is not None else 0
             return db.execute(
                 "SELECT n.channel_name,n.message_id,n.text,n.published_at,n.post_url,n.chat_id "
                 "FROM news_posts n JOIN news_channels c ON c.chat_id=n.chat_id "
-                "WHERE c.user_id=? ORDER BY n.published_at DESC,n.message_id DESC LIMIT ?",
-                (user_id, max(1, min(100, limit))),
+                "WHERE c.user_id=? AND n.published_at>=? ORDER BY n.published_at DESC,n.message_id DESC LIMIT ?",
+                (user_id, cutoff, max(1, min(100, limit))),
             ).fetchall()
 
     def remove_news_channel(self, user_id: int, channel_key: str) -> bool:
