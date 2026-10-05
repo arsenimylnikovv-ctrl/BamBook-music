@@ -317,9 +317,7 @@ def main() -> None:
                             "subscription_period": 2592000,
                         })
                     elif command == "/paysupport":
-                        support = os.environ.get("SUPPORT_USERNAME", "").strip()
-                        contact = f" Напиши {support} и приложи дату и скриншот платежа." if support else " Напиши администратору бота и приложи дату и скриншот платежа."
-                        telegram.send(chat, "Поддержка платежей." + contact + " Не отправляй коды входа или данные карты.")
+                        telegram.send(chat, "Самостоятельное управление подпиской:\n\n• Отмени автопродление: Telegram → Настройки → Telegram Stars → Подписки → BamBook Plus. Доступ останется до конца оплаченного срока.\n• Если оплата прошла, а Plus не появился: подожди минуту, затем закрой и снова открой BamBook → Аккаунт.\n• Текущий статус и дату окончания смотри в Mini App → Аккаунт.\n\nНе отправляй коды входа или данные карты.")
                     elif command == "/terms":
                         telegram.send(chat, "BamBook Plus — цифровая подписка на дополнительные функции BamBook. Подписка оформляется в Telegram Stars на 30 дней и автоматически продлевается, пока её не отменить в настройках Telegram → Stars → Подписки. После отмены доступ остаётся до конца оплаченного периода. По вопросам оплаты: /paysupport")
                     elif command == "/search":

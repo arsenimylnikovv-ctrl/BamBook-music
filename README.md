@@ -71,7 +71,7 @@ python -m bamboook
 
 Spotify подключается переменными `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` в Railway → **Variables**, после чего нужно развернуть сервис заново. Поиск Apple/iTunes и YouTube Music включён без этих ключей.
 
-Для BamBook Plus добавь `PREMIUM_PRICE_STARS` (по умолчанию `100`) и `SUPPORT_USERNAME` в Railway → **Variables**, затем сделай Redeploy. Оплата цифровой подписки проводится Telegram Stars; в боте доступны `/premium`, `/terms` и `/paysupport`. Проверь условия подписки и укажи актуальный контакт поддержки перед публикацией.
+Для BamBook Plus добавь `PREMIUM_PRICE_STARS` со значением `100` в Railway → **Variables**, затем сделай Redeploy. Оплата цифровой подписки проводится Telegram Stars; в боте доступны `/premium`, `/terms` и `/paysupport`. `/paysupport` объясняет пользователю, как самостоятельно отменить продление и обновить статус подписки.
 
 ### Стоимость
 
