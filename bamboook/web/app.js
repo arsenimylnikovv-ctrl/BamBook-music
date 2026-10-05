@@ -13,10 +13,20 @@
   const navItems = [...document.querySelectorAll(".nav-item")];
   const searchArea = document.querySelector(".search-area");
   const popularList = document.querySelector("#popular-list");
+  const playlistList = document.querySelector("#playlists-list");
+  const playlistDetail = document.querySelector("#playlist-detail");
+  const playlistTracksView = document.querySelector("#playlist-tracks");
+  const miniPlayer = document.querySelector("#mini-player");
+  const audioPlayer = document.querySelector("#audio-player");
+  const youtubePlayer = document.querySelector("#youtube-player");
   const pageTitle = document.querySelector("#page-title");
   const pageDescription = document.querySelector("#page-description");
   let currentView = "search";
   let currentTracks = [];
+  let libraryTracks = [];
+  let currentPlaylistTracks = [];
+  let playlists = [];
+  let selectedPlaylistId = null;
   let toastTimer;
 
   function applyTheme() {
@@ -68,25 +78,38 @@
     } catch { return ""; }
   }
 
+  function safePreview(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      return url.protocol === "https:" && (host.endsWith(".itunes.apple.com") || host.endsWith(".mzstatic.com")) ? url.href : "";
+    } catch { return ""; }
+  }
+
   function bookmarkIcon() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>';
   }
 
-  function card(track, index, saved = false) {
-    const links = track.links?.length ? track.links : [{ source: track.source || "Источник", url: track.url }];
-    const linkMarkup = links.map((item) => {
-      const href = safeLink(item.url);
-      return href ? `<a class="source-link" href="${escapeHTML(href)}" data-open-link="${escapeHTML(href)}">${escapeHTML(item.source)}</a>` : "";
-    }).join("");
+  function card(track, index, { kind = "search", playlistId = null } = {}) {
     const art = safeLink(track.artwork);
-    const action = saved
-      ? `<button class="remove-button" data-remove="${Number(track.id)}" type="button" aria-label="Удалить ${escapeHTML(track.title)} из библиотеки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg></button>`
-      : `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button>`;
+    const hasPreview = Boolean(safePreview(track.preview_url));
+    const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
+    const hasSpotify = /^[A-Za-z0-9]{22}$/.test(track.spotify_id || "");
+    const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${hasPreview || hasYoutube || hasSpotify ? "" : "disabled"}>${hasPreview || hasYoutube || hasSpotify ? "▶ Слушать" : "Нет плеера"}</button>`;
+    let action = "";
+    if (kind === "search") {
+      const options = playlists.map((item) => `<option value="${Number(item.id)}">${escapeHTML(item.name)}</option>`).join("");
+      action = `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button><select class="playlist-add-select" data-add-index="${index}" aria-label="Добавить в плейлист" ${playlists.length ? "" : "disabled"}><option value="">+ В плейлист</option>${options}</select>`;
+    } else if (kind === "playlist") {
+      action = `<button class="playlist-track-remove" data-remove-playlist-track="${Number(track.id)}" type="button">Убрать</button>`;
+    } else {
+      action = `<button class="remove-button" data-remove="${Number(track.id)}" type="button" aria-label="Удалить ${escapeHTML(track.title)} из библиотеки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg></button>`;
+    }
     return `<article class="track-card">
       <div class="cover" aria-hidden="true">♫${art ? `<img class="cover-art" src="${escapeHTML(art)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
       <div class="track-info"><strong class="track-title">${escapeHTML(track.title)}</strong>
       <span class="track-meta">${escapeHTML(track.artist)}${track.album ? ` · ${escapeHTML(track.album)}` : ""}</span>
-      <div class="track-extra">${track.duration ? `<span class="duration">${escapeHTML(track.duration)}</span>` : ""}<span class="source-links">${linkMarkup}</span></div></div>${action}</article>`;
+      <div class="track-extra">${track.duration ? `<span class="duration">${escapeHTML(track.duration)}</span>` : ""}</div><div class="track-tools">${play}${action}</div></div></article>`;
   }
 
   function pluralTracks(count) {
@@ -111,7 +134,7 @@
     try {
       const payload = await api("search", { query });
       currentTracks = payload.tracks || [];
-      results.innerHTML = currentTracks.map((track, index) => card(track, index)).join("");
+      results.innerHTML = currentTracks.map((track, index) => card(track, index, { kind: "search" })).join("");
       if (!currentTracks.length) renderEmpty(results, "Пока пусто", "Попробуй другое название или имя исполнителя.");
       heading.textContent = currentTracks.length ? `Нашлось: ${currentTracks.length}` : "Ничего не нашлось";
       source.textContent = currentTracks.length ? "Сохранить в библиотеку" : "Попробуй другой запрос";
@@ -129,7 +152,8 @@
     try {
       const payload = await api("library");
       const tracks = payload.tracks || [];
-      libraryResults.innerHTML = tracks.map((track) => card(track, 0, true)).join("");
+      libraryTracks = tracks;
+      libraryResults.innerHTML = tracks.map((track, index) => card(track, index, { kind: "library" })).join("");
       const count = tracks.length;
       document.querySelector("#library-count").textContent = count;
       const navCount = document.querySelector("#nav-library-count");
@@ -142,12 +166,82 @@
 
       const imported = await api("imports");
       const importsList = document.querySelector("#imports-list");
-      importsList.innerHTML = (imported.imports || []).map((item) => {
-        const href = safeLink(item.url);
-        return href ? `<div class="import-item"><strong>${escapeHTML(item.service)}</strong><a href="${escapeHTML(href)}" data-open-link="${escapeHTML(href)}">Открыть ссылку ↗</a></div>` : "";
-      }).join("");
+      importsList.innerHTML = (imported.imports || []).map((item) => `<div class="import-item"><strong>${escapeHTML(item.service)} · ссылка сохранена</strong></div>`).join("");
+      await loadPlaylists();
     } catch (error) {
       renderEmpty(libraryResults, "Не удалось открыть коллекцию", error.message);
+    }
+  }
+
+  async function loadPlaylists() {
+    const payload = await api("playlists");
+    playlists = payload.playlists || [];
+    playlistList.innerHTML = playlists.map((item) => `<div class="playlist-row"><button class="playlist-open ${Number(item.id) === Number(selectedPlaylistId) ? "active" : ""}" data-open-playlist="${Number(item.id)}" type="button"><strong>${escapeHTML(item.name)}</strong><span>${item.count} ${pluralTracks(item.count).replace(/^\d+ /, "")}</span></button><button class="playlist-delete" data-delete-playlist="${Number(item.id)}" type="button" aria-label="Удалить плейлист ${escapeHTML(item.name)}">×</button></div>`).join("");
+    if (!playlists.some((item) => Number(item.id) === Number(selectedPlaylistId))) {
+      selectedPlaylistId = null;
+      playlistDetail.classList.add("hidden");
+    }
+    if (selectedPlaylistId) await openPlaylist(selectedPlaylistId);
+  }
+
+  async function openPlaylist(playlistId) {
+    const playlist = playlists.find((item) => Number(item.id) === Number(playlistId));
+    if (!playlist) return;
+    selectedPlaylistId = Number(playlistId);
+    playlistDetail.classList.remove("hidden");
+    document.querySelector("#playlist-detail-title").textContent = playlist.name;
+    document.querySelector("#playlist-delete").dataset.deletePlaylist = String(playlist.id);
+    const payload = await api("playlist_tracks", { playlistId: playlist.id });
+    currentPlaylistTracks = payload.tracks || [];
+    playlistTracksView.innerHTML = currentPlaylistTracks.length
+      ? currentPlaylistTracks.map((track, index) => card(track, index, { kind: "playlist", playlistId: playlist.id })).join("")
+      : '<div class="empty-state"><span class="empty-note" aria-hidden="true">♫</span><h3>Плейлист пока пуст</h3><p>Найди песню и выбери этот плейлист в меню добавления.</p></div>';
+    playlistList.querySelectorAll("[data-open-playlist]").forEach((button) => button.classList.toggle("active", Number(button.dataset.openPlaylist) === selectedPlaylistId));
+  }
+
+  async function createPlaylist(event) {
+    event.preventDefault();
+    const input = document.querySelector("#playlist-name");
+    const name = input.value.trim();
+    try {
+      const result = await api("create_playlist", { name });
+      input.value = "";
+      selectedPlaylistId = result.playlistId;
+      await loadPlaylists();
+      showToast("Плейлист создан");
+    } catch (error) { showToast(error.message); }
+  }
+
+  function playTrack(track) {
+    const preview = safePreview(track?.preview_url);
+    const youtubeId = /^[A-Za-z0-9_-]{6,20}$/.test(track?.youtube_id || "") ? track.youtube_id : "";
+    const spotifyId = /^[A-Za-z0-9]{22}$/.test(track?.spotify_id || "") ? track.spotify_id : "";
+    if (!preview && !youtubeId && !spotifyId) { showToast("Для этого результата нет доступного проигрывателя"); return; }
+    document.querySelector("#player-title").textContent = track.title;
+    document.querySelector("#player-artist").textContent = track.artist;
+    miniPlayer.classList.add("active");
+    audioPlayer.pause();
+    if (preview) {
+      youtubePlayer.src = "about:blank";
+      youtubePlayer.classList.add("hidden");
+      audioPlayer.classList.remove("hidden");
+      miniPlayer.classList.remove("youtube", "spotify");
+      audioPlayer.src = preview;
+      audioPlayer.play().catch(() => showToast("Нажми ▶ в плеере, чтобы начать прослушивание"));
+    } else {
+      audioPlayer.removeAttribute("src");
+      audioPlayer.load();
+      audioPlayer.classList.add("hidden");
+      youtubePlayer.classList.remove("hidden");
+      if (youtubeId) {
+        miniPlayer.classList.add("youtube");
+        miniPlayer.classList.remove("spotify");
+        youtubePlayer.src = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&playsinline=1`;
+      } else {
+        miniPlayer.classList.add("spotify");
+        miniPlayer.classList.remove("youtube");
+        youtubePlayer.src = `https://open.spotify.com/embed/track/${spotifyId}?utm_source=generator`;
+      }
     }
   }
 
@@ -165,6 +259,37 @@
     if (suggestion) {
       queryInput.value = suggestion.dataset.query;
       search(queryInput.value);
+      return;
+    }
+    const playButton = event.target.closest("[data-play-kind]");
+    if (playButton) {
+      const groups = { search: currentTracks, library: libraryTracks, playlist: currentPlaylistTracks };
+      playTrack(groups[playButton.dataset.playKind]?.[Number(playButton.dataset.playIndex)]);
+      return;
+    }
+    const openPlaylistButton = event.target.closest("[data-open-playlist]");
+    if (openPlaylistButton) {
+      try { await openPlaylist(Number(openPlaylistButton.dataset.openPlaylist)); }
+      catch (error) { showToast(error.message); }
+      return;
+    }
+    const deletePlaylistButton = event.target.closest("[data-delete-playlist]");
+    if (deletePlaylistButton) {
+      try {
+        await api("delete_playlist", { playlistId: Number(deletePlaylistButton.dataset.deletePlaylist) });
+        selectedPlaylistId = null;
+        await loadPlaylists();
+        showToast("Плейлист удалён");
+      } catch (error) { showToast(error.message); }
+      return;
+    }
+    const removePlaylistTrack = event.target.closest("[data-remove-playlist-track]");
+    if (removePlaylistTrack && selectedPlaylistId) {
+      try {
+        await api("remove_from_playlist", { playlistId: selectedPlaylistId, trackId: Number(removePlaylistTrack.dataset.removePlaylistTrack) });
+        await loadLibrary();
+        showToast("Трек убран из плейлиста");
+      } catch (error) { showToast(error.message); }
       return;
     }
     const saveButton = event.target.closest("[data-save]");
@@ -211,6 +336,21 @@
   }
 
   form.addEventListener("submit", (event) => { event.preventDefault(); search(queryInput.value); });
+  document.querySelector("#playlist-form").addEventListener("submit", createPlaylist);
+  document.body.addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-add-index]");
+    if (!select || !select.value) return;
+    const track = currentTracks[Number(select.dataset.addIndex)];
+    const playlistId = Number(select.value);
+    select.disabled = true;
+    try {
+      const result = await api("add_to_playlist", { playlistId, track });
+      showToast(result.added ? "Добавлено в плейлист" : "Этот трек уже в плейлисте");
+      selectedPlaylistId = playlistId;
+      await loadLibrary();
+    } catch (error) { showToast(error.message); }
+    finally { select.disabled = false; select.value = ""; }
+  });
   document.querySelector("#import-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = document.querySelector("#import-url");
@@ -235,4 +375,6 @@
   tg?.onEvent?.("themeChanged", applyTheme);
   tg?.MainButton?.hide?.();
   if (!initData) showToast("Открой приложение из чата с BamBook");
+  else loadLibrary();
 })();
+

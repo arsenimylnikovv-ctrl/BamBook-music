@@ -90,6 +90,7 @@ def _spotify_search(query: str, limit: int) -> list[dict[str, str]]:
             "album": item.get("album", {}).get("name", ""),
             "url": item.get("external_urls", {}).get("spotify", ""),
             "source": "Spotify",
+            "spotify_id": item.get("id", ""),
             "artwork": (item.get("album", {}).get("images") or [{}])[0].get("url", ""),
             "duration": _duration(item.get("duration_ms")),
         }
@@ -120,6 +121,7 @@ def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
             "album": "",
             "url": item.get("webpage_url") or f"https://music.youtube.com/watch?v={item['id']}",
             "source": "YouTube Music",
+            "youtube_id": item["id"],
             "artwork": item.get("thumbnail", ""),
             "duration": _duration((item.get("duration") or 0) * 1000),
         }
@@ -178,6 +180,10 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 links = combined["links"]
                 combined.update(track)
                 combined["links"] = links
+            else:
+                for field in ("preview_url", "youtube_id", "spotify_id"):
+                    if not combined.get(field) and track.get(field):
+                        combined[field] = track[field]
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)
     return ranked[: limit * 2]
 

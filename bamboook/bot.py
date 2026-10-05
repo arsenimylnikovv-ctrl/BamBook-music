@@ -185,10 +185,9 @@ def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title:
 
 
 def format_track(track: tuple, index: int) -> str:
-    _id, title, artist, album, url, source, *_metadata = track
+    _id, title, artist, album, *_metadata = track
     extra = f" · {album}" if album else ""
-    source_label = f" [{source}]" if source else ""
-    return f"{index}. {title} — {artist}{extra}{source_label}\n{url}"
+    return f"{index}. {title} — {artist}{extra}"
 
 
 def main() -> None:
@@ -274,7 +273,7 @@ def main() -> None:
                     query = ""
                     audio_url = ""
                     if command in ("/start", "/help"):
-                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь название трека или просто напиши запрос сообщением.\n/audio прямая_ссылка — конвертировать разрешённый аудиофайл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат\n/library — моя коллекция\n/remove номер — удалить трек\n/import ссылка — сохранить ссылку из музыкального сервиса")
+                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь запрос или просто напиши название. Доступные аудиопревью пришлю прямо сюда.\n/audio прямая_ссылка — конвертировать разрешённый файл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат поиска\n/library — моя коллекция\n/remove номер — удалить трек\n/playlists — мои плейлисты\n/playlist_new название — создать плейлист\n/playlist_add номер_плейлиста номер_трека — добавить трек из библиотеки\n/playlist_show номер — показать треки\n/playlist_remove номер_плейлиста номер_трека — убрать трек\n/playlist_delete номер — удалить плейлист")
                     elif command == "/search":
                         if not argument:
                             telegram.send(chat, "Напиши название трека или исполнителя — например: Kanye West Gold Digger")
@@ -332,6 +331,72 @@ def main() -> None:
                             telegram.send(chat, "Библиотека пока пуста. Найди трек: /search запрос")
                         else:
                             telegram.send(chat, "Твоя библиотека:\n\n" + "\n\n".join(format_track(row, i) for i, row in enumerate(tracks[:30], 1)))
+                    elif command == "/playlists":
+                        playlists = library.list_playlists(user)
+                        if not playlists:
+                            telegram.send(chat, "Плейлистов пока нет. Создай первый: /playlist_new Грустные песни")
+                        else:
+                            lines = [f"{index}. {name} — {count} трек(ов)" for index, (_playlist_id, name, count) in enumerate(playlists, 1)]
+                            telegram.send(chat, "Твои плейлисты:\n\n" + "\n".join(lines) + "\n\nСоздать: /playlist_new название")
+                    elif command in ("/playlist_new", "/playlist_create"):
+                        name = argument.strip()
+                        if not name or len(name) > 60:
+                            telegram.send(chat, "Напиши название длиной до 60 символов: /playlist_new Грустные песни")
+                            continue
+                        if any(item[1].casefold() == name.casefold() for item in library.list_playlists(user)):
+                            telegram.send(chat, "Плейлист с таким названием уже существует.")
+                            continue
+                        library.create_playlist(user, name)
+                        telegram.send(chat, f"Создал плейлист «{name}». Добавляй треки из /library командой /playlist_add номер_плейлиста номер_трека.")
+                    elif command == "/playlist_add":
+                        values = argument.split()
+                        playlists = library.list_playlists(user)
+                        tracks = library.list_tracks(user)
+                        if len(values) != 2 or not all(value.isdigit() for value in values):
+                            telegram.send(chat, "Формат: /playlist_add номер_плейлиста номер_трека. Номера смотри в /playlists и /library.")
+                            continue
+                        playlist_index, track_index = map(int, values)
+                        if not 1 <= playlist_index <= len(playlists) or not 1 <= track_index <= len(tracks):
+                            telegram.send(chat, "Не нашёл такой номер. Проверь /playlists и /library.")
+                            continue
+                        row = tracks[track_index - 1]
+                        track = {"title": row[1], "artist": row[2], "album": row[3], "url": row[4], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
+                        _saved, added = library.add_to_playlist(user, playlists[playlist_index - 1][0], track)
+                        telegram.send(chat, "Добавил трек в плейлист 🎵" if added else "Этот трек уже есть в плейлисте.")
+                    elif command == "/playlist_show":
+                        playlists = library.list_playlists(user)
+                        if not argument.isdigit() or not 1 <= int(argument) <= len(playlists):
+                            telegram.send(chat, "Укажи номер из /playlists: /playlist_show 1")
+                            continue
+                        playlist_id, name, _count = playlists[int(argument) - 1]
+                        tracks = library.list_playlist_tracks(user, playlist_id)
+                        body = "\n".join(f"{index}. {row[1]} — {row[2]}" for index, row in enumerate(tracks, 1)) or "Пока пусто. Добавь трек из /library."
+                        telegram.send(chat, f"Плейлист «{name}»:\n\n{body}\n\nУбрать трек: /playlist_remove {argument} номер_трека")
+                    elif command == "/playlist_remove":
+                        values = argument.split()
+                        playlists = library.list_playlists(user)
+                        if len(values) != 2 or not all(value.isdigit() for value in values):
+                            telegram.send(chat, "Формат: /playlist_remove номер_плейлиста номер_трека")
+                            continue
+                        playlist_index, track_index = map(int, values)
+                        if not 1 <= playlist_index <= len(playlists):
+                            telegram.send(chat, "Не нашёл такой плейлист. Проверь /playlists.")
+                            continue
+                        playlist_id = playlists[playlist_index - 1][0]
+                        tracks = library.list_playlist_tracks(user, playlist_id)
+                        if not 1 <= track_index <= len(tracks):
+                            telegram.send(chat, "Не нашёл такой трек в плейлисте. Проверь /playlist_show номер.")
+                            continue
+                        removed = library.remove_from_playlist(user, playlist_id, tracks[track_index - 1][0])
+                        telegram.send(chat, "Убрал трек из плейлиста." if removed else "Трек уже убран.")
+                    elif command == "/playlist_delete":
+                        playlists = library.list_playlists(user)
+                        if not argument.isdigit() or not 1 <= int(argument) <= len(playlists):
+                            telegram.send(chat, "Укажи номер плейлиста из /playlists: /playlist_delete 1")
+                            continue
+                        _playlist_id, name, _count = playlists[int(argument) - 1]
+                        library.delete_playlist(user, _playlist_id)
+                        telegram.send(chat, f"Удалил плейлист «{name}».")
                     elif command == "/remove":
                         if not argument.isdigit():
                             telegram.send(chat, "Укажи номер трека из /library: /remove 1")

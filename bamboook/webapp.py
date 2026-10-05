@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -99,13 +100,89 @@ def make_handler(bot_token: str, database_path: str):
                     if not query or len(query) > 160:
                         self._json(400, {"error": "Enter a search query (up to 160 characters)"})
                         return
-                    self._json(200, {"tracks": search_tracks(query, limit=8)})
+                    tracks = search_tracks(query, limit=8)
+                    for track in tracks:
+                        track.pop("links", None)
+                    self._json(200, {"tracks": tracks})
                 elif action == "library":
                     tracks = [
-                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "url": row[4], "source": row[5], "artwork": row[6], "duration": row[7]}
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
                         for row in library.list_tracks(user_id)
                     ]
                     self._json(200, {"tracks": tracks})
+                elif action == "playlists":
+                    playlists = [
+                        {"id": row[0], "name": row[1], "count": row[2]}
+                        for row in library.list_playlists(user_id)
+                    ]
+                    self._json(200, {"playlists": playlists})
+                elif action == "playlist_tracks":
+                    try:
+                        playlist_id = int(body.get("playlistId"))
+                    except (ValueError, TypeError):
+                        self._json(400, {"error": "Invalid playlist ID"})
+                        return
+                    if not any(item[0] == playlist_id for item in library.list_playlists(user_id)):
+                        self._json(404, {"error": "Плейлист не найден"})
+                        return
+                    tracks = [
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
+                        for row in library.list_playlist_tracks(user_id, playlist_id)
+                    ]
+                    self._json(200, {"tracks": tracks})
+                elif action == "create_playlist":
+                    name = str(body.get("name", "")).strip()
+                    if not name or len(name) > 60:
+                        self._json(400, {"error": "Название плейлиста должно содержать от 1 до 60 символов"})
+                        return
+                    if any(item[1].casefold() == name.casefold() for item in library.list_playlists(user_id)):
+                        self._json(409, {"error": "Плейлист с таким названием уже есть"})
+                        return
+                    playlist_id = library.create_playlist(user_id, name)
+                    self._json(200, {"created": True, "playlistId": playlist_id})
+                elif action == "delete_playlist":
+                    try:
+                        playlist_id = int(body.get("playlistId"))
+                    except (ValueError, TypeError):
+                        self._json(400, {"error": "Invalid playlist ID"})
+                        return
+                    self._json(200, {"deleted": library.delete_playlist(user_id, playlist_id)})
+                elif action == "add_to_playlist":
+                    try:
+                        playlist_id = int(body.get("playlistId"))
+                    except (ValueError, TypeError):
+                        self._json(400, {"error": "Invalid playlist ID"})
+                        return
+                    track = body.get("track")
+                    if not isinstance(track, dict):
+                        self._json(400, {"error": "Invalid track"})
+                        return
+                    url = str(track.get("url", ""))
+                    if urlsplit(url).scheme != "https" or not urlsplit(url).netloc:
+                        self._json(400, {"error": "Invalid track"})
+                        return
+                    clean_track = {
+                        "title": str(track.get("title", "Track"))[:200],
+                        "artist": str(track.get("artist", "Unknown artist"))[:200],
+                        "album": str(track.get("album", ""))[:200],
+                        "url": url[:1000],
+                        "source": str(track.get("source", ""))[:80],
+                        "artwork": str(track.get("artwork", ""))[:1000] if urlsplit(str(track.get("artwork", ""))).scheme == "https" else "",
+                        "duration": str(track.get("duration", ""))[:12],
+                        "preview_url": str(track.get("preview_url", ""))[:1000],
+                        "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
+                        "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
+                    }
+                    saved, added = library.add_to_playlist(user_id, playlist_id, clean_track)
+                    self._json(200, {"saved": saved, "added": added})
+                elif action == "remove_from_playlist":
+                    try:
+                        playlist_id = int(body.get("playlistId"))
+                        track_id = int(body.get("trackId"))
+                    except (ValueError, TypeError):
+                        self._json(400, {"error": "Invalid playlist track"})
+                        return
+                    self._json(200, {"removed": library.remove_from_playlist(user_id, playlist_id, track_id)})
                 elif action == "imports":
                     imports = [
                         {"id": row[0], "service": row[1], "url": row[2]}
@@ -129,6 +206,9 @@ def make_handler(bot_token: str, database_path: str):
                         "source": str(track.get("source", ""))[:80],
                         "artwork": str(track.get("artwork", ""))[:1000] if urlsplit(str(track.get("artwork", ""))).scheme == "https" else "",
                         "duration": str(track.get("duration", ""))[:12],
+                        "preview_url": str(track.get("preview_url", ""))[:1000],
+                        "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
+                        "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
                     }
                     added = library.save_track(user_id, clean_track)
                     self._json(200, {"saved": added})
@@ -162,3 +242,4 @@ def start_webapp(bot_token: str, database_path: str, host: str = "0.0.0.0", port
     server = ThreadingHTTPServer((host, port), make_handler(bot_token, database_path))
     server.daemon_threads = True
     return server
+

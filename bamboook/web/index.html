@@ -65,6 +65,18 @@
         </div>
         <p class="library-caption" id="library-caption">Треки, которые хочется оставить рядом.</p>
         <div class="results" id="library-results" aria-live="polite"></div>
+        <div class="playlist-panel">
+          <div class="section-heading playlist-heading"><div><p class="eyebrow section-eyebrow">ТВОИ ПОДБОРКИ</p><h2>Плейлисты</h2></div><span class="import-mark" aria-hidden="true">♫</span></div>
+          <form class="playlist-form" id="playlist-form">
+            <input id="playlist-name" type="text" maxlength="60" placeholder="Например, Грустные песни" aria-label="Название нового плейлиста" required />
+            <button class="import-button" type="submit" aria-label="Создать плейлист"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14"/></svg></button>
+          </form>
+          <div class="playlists-list" id="playlists-list"></div>
+          <div class="playlist-detail hidden" id="playlist-detail">
+            <div class="playlist-detail-heading"><h3 id="playlist-detail-title"></h3><button class="playlist-delete" id="playlist-delete" type="button">Удалить</button></div>
+            <div class="results" id="playlist-tracks" aria-live="polite"></div>
+          </div>
+        </div>
         <div class="import-panel">
           <div class="section-heading import-heading"><div><p class="eyebrow section-eyebrow">ТВОИ ПЛЕЙЛИСТЫ</p><h2>Импорт ссылки</h2></div><span class="import-mark" aria-hidden="true">↗</span></div>
           <p class="import-hint">Сохрани ссылку на трек или плейлист из любимого сервиса.</p>
@@ -76,6 +88,11 @@
         </div>
       </section>
 
+      <div class="mini-player" id="mini-player" aria-label="Плеер">
+        <div class="mini-player-copy"><strong id="player-title">Выбери фрагмент</strong><span id="player-artist">Аудиопревью</span></div>
+        <audio id="audio-player" controls preload="none"></audio>
+        <iframe id="youtube-player" class="hidden" title="YouTube проигрыватель" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      </div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </main>
 
@@ -85,3 +102,4 @@
     </nav>
   </body>
 </html>
+
