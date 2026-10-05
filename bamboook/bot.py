@@ -62,13 +62,13 @@ class Telegram:
             raise ValueError("Размер исходного файла превышает лимит Telegram Bot API (20 МБ).")
         return data
 
-    def send_audio(self, chat_id: int, path: str, title: str) -> None:
+    def send_audio(self, chat_id: int, path: str, title: str, performer: str = "BamBook") -> None:
         boundary = "BamBookBoundary7MA4YWxkTrZu0gW"
         if os.path.getsize(path) > 50 * 1024 * 1024:
             raise ValueError("После конвертации файл больше лимита Telegram Bot API (50 МБ).")
         with open(path, "rb") as audio_file:
             audio_data = audio_file.read()
-        fields = {"chat_id": str(chat_id), "title": title[:200], "performer": "BamBook"}
+        fields = {"chat_id": str(chat_id), "title": title[:200], "performer": performer[:200]}
         parts = []
         for name, value in fields.items():
             parts.extend([
@@ -156,10 +156,30 @@ def download_direct_audio(url: str) -> tuple[bytes, str]:
     return data, os.path.splitext(os.path.basename(parsed.path))[0] or "BamBook audio"
 
 
-def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str) -> None:
+def download_apple_preview(url: str) -> bytes:
+    """Fetch only Apple's catalog preview clips, not full streaming tracks."""
+    allowed_suffixes = (".itunes.apple.com", ".mzstatic.com")
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.lower().endswith(allowed_suffixes):
+        raise ValueError("Apple returned an unexpected preview host")
+    request = Request(url, headers={"User-Agent": "BamBook/0.1"})
+    with urlopen(request, timeout=30) as response:
+        final_host = (urlsplit(response.geturl()).hostname or "").lower()
+        if not final_host.endswith(allowed_suffixes):
+            raise ValueError("Apple preview redirected to an unexpected host")
+        content_type = response.headers.get_content_type()
+        if not content_type.startswith("audio/") and content_type != "application/octet-stream":
+            raise ValueError("Apple preview URL did not return audio")
+        data = response.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024:
+        raise ValueError("Apple preview is larger than Telegram's 20 MB download limit")
+    return data
+
+
+def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook") -> None:
     temp_dir, output_path = transcode_to_m4a(audio_data, title)
     try:
-        telegram.send_audio(chat_id, output_path, title)
+        telegram.send_audio(chat_id, output_path, title, performer)
     finally:
         temp_dir.cleanup()
 
@@ -283,12 +303,23 @@ def main() -> None:
                         if not results:
                             telegram.send(chat, "Не нашёл совпадений в подключённых каталогах. Попробуй уточнить запрос.")
                         else:
-                            lines = [f"Нашёл {len(results)} совпадений. Сохрани через /save номер:"]
-                            for index, track in enumerate(results, 1):
-                                album = f" · {track['album']}" if track.get("album") else ""
-                                links = "\n".join(f"{link['source']}: {link['url']}" for link in track.get("links", [{"source": track["source"], "url": track["url"]}]))
-                                lines.append(f"{index}. {track['title']} — {track['artist']}{album}\n{links}")
-                            telegram.send(chat, "\n\n".join(lines))
+                            previews = [(index, track) for index, track in enumerate(results, 1) if track.get("preview_url")][:3]
+                            if previews:
+                                telegram.send(chat, f"Нашёл {len(results)} совпадений. Вот официальные аудиофрагменты из каталога Apple Music:")
+                                for index, track in previews:
+                                    try:
+                                        telegram.send(chat, f"{index}. {track['title']} — {track['artist']}")
+                                        audio_data = download_apple_preview(track["preview_url"])
+                                        convert_and_send(telegram, chat, audio_data, track["title"], track["artist"])
+                                    except Exception as error:
+                                        log.warning("Could not send Apple preview (%s)", type(error).__name__)
+                                telegram.send(chat, "Чтобы сохранить трек, отправь /save с его номером выше. Превью — короткий фрагмент, каталог не выдаёт полные записи.")
+                            else:
+                                top = "\n".join(
+                                    f"{index}. {track['title']} — {track['artist']}"
+                                    for index, track in enumerate(results[:5], 1)
+                                )
+                                telegram.send(chat, "Нашёл совпадения, но каталоги не предоставили для них аудиопревью.\n\n" + top + "\n\nПолную запись нельзя получить из обычной ссылки Spotify/YouTube/Apple. Пришли боту свой аудиофайл — я перекодирую его в AAC-LC M4A.")
                     elif command == "/save":
                         if not argument.isdigit() or not 1 <= int(argument) <= len(pending.get(user, [])):
                             telegram.send(chat, "Сначала найди трек командой /search, затем укажи его номер: /save 1")
