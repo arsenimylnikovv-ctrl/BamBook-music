@@ -33,16 +33,39 @@ python -m bamboook
 
 ## Публикация Mini App и бота
 
-`https://telegram-mini-app-development-seven.vercel.app` — адрес опубликованного макета интерфейса. Он сам по себе не запускает BamBook API и Telegram-бота. Для работающего приложения разверни этот проект целиком как Docker web service. В корне есть `render.yaml`: Render Blueprint создаст постоянно работающий сервис с HTTPS и постоянным диском для SQLite. В настройках Blueprint введи `TELEGRAM_BOT_TOKEN` в секретное поле. Токен не добавляй в GitHub и не вставляй в `render.yaml`.
+`https://telegram-mini-app-development-seven.vercel.app` — отдельный макет, не сервер бота. У BamBook Mini App, API, Telegram-бот и база запускаются одним сервисом из этого репозитория. Render Blueprint описан в корневом `render.yaml`: Docker-сервис в регионе Frankfurt, постоянный диск для SQLite и HTTPS-адрес.
 
-Шаги:
+### 1. Разреши Render читать приватный репозиторий
 
-1. Убедись, что в GitHub находится этот проект целиком, включая `Dockerfile` и `render.yaml`; файл `.env` туда не загружай.
-2. В Render выбери **New → Blueprint**, подключи репозиторий BamBook и подтверди сервис `bambook`. Тариф в конфигурации — `Starter`, поскольку бесплатный инстанс засыпает и теряет SQLite-файлы при перезапусках.
-3. Введи токен бота в поле `TELEGRAM_BOT_TOKEN` в Render и дождись успешного Deploy. Сервис сам получает HTTPS URL, сохраняет базу на постоянном диске и устанавливает кнопку меню Telegram при старте.
-4. Открой URL сервиса из Render и проверь, что `/health` показывает `{"ok": true}`.
-5. В Telegram открой `@BotFather` → `/mybots` → выбери BamBook → **Bot Settings → Menu Button → Configure menu button**. Вставь HTTPS URL сервиса Render и задай подпись кнопки `BamBook`. Используй URL Render, а не Vercel Preview: только Render URL обслуживает вместе с интерфейсом API и бот.
-6. Открой бота, отправь `/start`, затем открой кнопку BamBook. Поиск по Apple/iTunes и YouTube Music доступен сразу; поиск Spotify требует `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` в переменных окружения Render.
+1. Войди в Render через GitHub на [render.com](https://render.com).
+2. Открой [установку приложения Render для GitHub](https://github.com/apps/render/installations/new) и выбери **Configure** для своего аккаунта.
+3. В **Repository access** добавь `arsenimylnikovv-ctrl/BamBook-music` (или разреши все репозитории). Это требуется после переключения репозитория в Private.
+
+### 2. Создай сервис
+
+1. В Render открой **New → Blueprint**.
+2. Выбери приватный `BamBook-music`, ветку `main` и файл `/render.yaml`, затем нажми **Apply**.
+3. При запросе значения `TELEGRAM_BOT_TOKEN` вставь токен из `@BotFather`. Оставь его только в секретных переменных Render — не в GitHub, не в сообщениях и не в `render.yaml`.
+4. Подтверди план сервиса и расход. В репозитории задан тариф `0.5c-512mb` и диск 1 GB; точную цену и валюту покажет Render перед созданием. Бесплатный Web Service здесь не подходит: он засыпает после простоя, не поддерживает persistent disk и теряет SQLite при перезапуске. Если тариф платный, проверь сумму и лимит расходов в Render перед подтверждением.
+5. Дождись статуса **Live**. В настройках сервиса открой **Environment** и убедись, что задан `TELEGRAM_BOT_TOKEN`; `DATABASE_PATH`, `WEBAPP_URL` и порт берутся из Blueprint/Render.
+6. В разделе **Events/Logs** проверь, что приложение стартовало без ошибки авторизации Telegram. Скопируй URL вида `https://bambook-....onrender.com` и открой `https://<этот-домен>/health`. Ответ должен быть `{"ok": true}`; главная страница по этому URL — и есть размещённый Mini App.
+
+### 3. Покажи Mini App в Telegram
+
+При старте BamBook автоматически задаёт общую кнопку меню через Telegram Bot API, используя URL сервиса Render. Чтобы задать кнопку вручную или проверить её в `@BotFather`:
+
+1. Открой `@BotFather` → `/mybots` → выбери BamBook → **Bot Settings → Menu Button → Configure menu button**.
+2. Укажи подпись `BamBook` и тот же HTTPS URL `https://<твой-сервис>.onrender.com` (без `/health`).
+3. Открой чат с ботом, нажми **Start** или отправь `/start`, затем кнопку **BamBook** рядом с полем ввода. Mini App должен открыться внутри Telegram.
+4. Для отдельной заметной кнопки запуска на профиле бота настрой в BotFather **Configure Main Mini App**; это необязательно, кнопки меню достаточно.
+
+Если после этого видишь старый макет, проверь домен: нужно использовать URL Render, не ссылку Vercel. Если кнопки нет — смотри Render **Logs** на `Could not set Mini App menu button`; вручную сохрани URL через BotFather и перезапусти сервис после исправления токена.
+
+### 4. Дополнительный поиск
+
+Поиск Apple/iTunes и YouTube Music включён сразу. Spotify можно подключить в Render → сервис → **Environment**, добавив `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` из Spotify Developer Dashboard, затем сделать **Save, rebuild, and deploy**. Токен Telegram никому не отправляй; если случайно опубликовал его, перевыпусти в BotFather.
+
+Важно: поиск каталогов находит карточки и ссылки, но стриминговые API не отдают BamBook полные музыкальные файлы. AAC-LC/M4A перекодирование работает на отправленном боту аудио или разрешённой прямой ссылке на аудиофайл. Обычная ссылка Spotify/YouTube Music/Яндекс Музыки не превращается автоматически в скачиваемый файл.
 
 Каталожный поиск возвращает карточки и ссылки на сервисы, а не полные музыкальные записи. Mini App может сохранять треки и ссылки в личной библиотеке; конвертация в AAC-LC/M4A работает для аудио, которое пользователь прислал боту, и для отдельно разрешённых прямых ссылок на файлы.
 
@@ -57,3 +80,4 @@ python -m bamboook
 ## Дальше
 
 Реализовать чтение плейлистов через официальные API там, где это разрешено и доступно, затем настроить развёртывание и резервные копии SQLite.
+
