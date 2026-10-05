@@ -1,0 +1,2 @@
+"""BamBook Telegram music library."""
+

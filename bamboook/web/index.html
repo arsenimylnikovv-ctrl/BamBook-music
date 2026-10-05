@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101810" />
+    <meta name="color-scheme" content="dark light" />
+    <title>BamBook — музыка</title>
+    <link rel="preconnect" href="https://telegram.org" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="#home" aria-label="BamBook — главная">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13M9 10l11-2M6 21a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Zm11-2a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Z" /></svg></span>
+          <span class="brand-copy"><strong>BamBook</strong><small>ТВОЯ АУДИОТЕКА</small></span>
+        </a>
+        <div class="user-chip" id="user-chip"><span class="status-dot"></span><span>Привет!</span></div>
+      </header>
+
+      <section class="intro" id="home">
+        <div class="intro-copy">
+          <p class="eyebrow"><span class="eyebrow-line"></span> НАЙДИ СВОЙ РИТМ</p>
+          <h1 id="page-title">Музыка<span class="title-period">.</span></h1>
+          <p class="subhead" id="page-description">Ищи любимые треки и собирай<br class="wide-only" /> свою коллекцию в одном месте.</p>
+        </div>
+        <div class="intro-orbit" aria-hidden="true"><span class="orbit-note">♫</span><i></i><b></b></div>
+      </section>
+
+      <section class="search-area" aria-label="Поиск музыки">
+        <form class="search-form" id="search-form">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
+          <input id="query" name="query" autocomplete="off" enterkeyhint="search" placeholder="Исполнитель или трек" maxlength="160" aria-label="Исполнитель или название трека" />
+          <button class="search-button" id="search-button" type="submit"><span>Найти</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+        </form>
+        <div class="catalog-note"><span class="catalog-spark">✳</span> Apple Music <i></i> Spotify <i></i> YouTube Music</div>
+      </section>
+
+      <section class="view" id="search-view">
+        <div class="section-heading">
+          <div><p class="eyebrow section-eyebrow">ДЛЯ ТЕБЯ</p><h2 id="results-heading">Популярные запросы</h2></div>
+          <span class="section-caption" id="result-source">Выбери и начни поиск</span>
+        </div>
+        <div class="popular-list" id="popular-list" aria-label="Популярные запросы">
+          <button class="popular-card" type="button" data-query="Kanye West Gold Digger">
+            <span class="artwork art-lime" aria-hidden="true"><span>YE</span><i>♫</i></span><span class="popular-copy"><strong>Gold Digger</strong><small>Kanye West</small></span><span class="popular-go" aria-hidden="true">↗</span>
+          </button>
+          <button class="popular-card" type="button" data-query="The Weeknd Blinding Lights">
+            <span class="artwork art-orange" aria-hidden="true"><span>AFTER<br />HOURS</span><i>✳</i></span><span class="popular-copy"><strong>Blinding Lights</strong><small>The Weeknd</small></span><span class="popular-go" aria-hidden="true">↗</span>
+          </button>
+          <button class="popular-card" type="button" data-query="Daft Punk Get Lucky">
+            <span class="artwork art-blue" aria-hidden="true"><span>DAFT<br />PUNK</span><i>♫</i></span><span class="popular-copy"><strong>Get Lucky</strong><small>Daft Punk</small></span><span class="popular-go" aria-hidden="true">↗</span>
+          </button>
+        </div>
+        <div class="results" id="results" aria-live="polite"></div>
+      </section>
+
+      <section class="view hidden" id="library-view">
+        <div class="section-heading library-heading">
+          <div><p class="eyebrow section-eyebrow">СОХРАНЁННОЕ</p><h2>Моя музыка</h2></div>
+          <span class="library-count" id="library-count">0</span>
+        </div>
+        <p class="library-caption" id="library-caption">Треки, которые хочется оставить рядом.</p>
+        <div class="results" id="library-results" aria-live="polite"></div>
+        <div class="import-panel">
+          <div class="section-heading import-heading"><div><p class="eyebrow section-eyebrow">ТВОИ ПЛЕЙЛИСТЫ</p><h2>Импорт ссылки</h2></div><span class="import-mark" aria-hidden="true">↗</span></div>
+          <p class="import-hint">Сохрани ссылку на трек или плейлист из любимого сервиса.</p>
+          <form class="import-form" id="import-form">
+            <input id="import-url" type="url" inputmode="url" placeholder="Вставь ссылку на музыку" autocomplete="url" required />
+            <button class="import-button" type="submit" aria-label="Добавить ссылку"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14"/></svg></button>
+          </form>
+          <div class="imports-list" id="imports-list"></div>
+        </div>
+      </section>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Разделы BamBook">
+      <button class="nav-item active" data-view="search" type="button" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13M9 10l11-2M6 21a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Zm11-2a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Z" /></svg><span>Музыка</span></button>
+      <button class="nav-item" data-view="library" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.8h12a2 2 0 0 1 2 2V21l-8-4-8 4V5.8a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/></svg><span>Библиотека</span><b class="nav-count" id="nav-library-count">0</b></button>
+    </nav>
+  </body>
+</html>

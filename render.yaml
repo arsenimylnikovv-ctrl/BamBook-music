@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: bambook
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: bambook-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DATABASE_PATH
+        value: /var/data/bambook.sqlite3
+      - key: WEBAPP_URL
+        fromService:
+          name: bambook
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL

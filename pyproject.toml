@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bambook"
+version = "0.1.0"
+description = "Telegram bot for music discovery and a personal music library"
+requires-python = ">=3.11"
+dependencies = ["yt-dlp[default]"]
+
+[tool.setuptools]
+packages = ["bamboook"]
+
+[tool.setuptools.package-data]
+bamboook = ["web/*.html", "web/*.js", "web/*.css"]
