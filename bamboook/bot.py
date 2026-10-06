@@ -131,6 +131,10 @@ def download_direct_audio(url: str) -> tuple[bytes, str]:
     host = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or not host or parsed.username or parsed.password:
         raise ValueError("Нужна прямая HTTPS-ссылка на аудиофайл.")
+    if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com") or host == "youtube-nocookie.com" or host.endswith(".youtube-nocookie.com"):
+        raise ValueError("Это страница видео YouTube, а не аудиофайл. BamBook не извлекает музыку из YouTube. Пришли аудиофайл или прямую ссылку на файл, который разрешено скачивать.")
+    if host == "spotify.com" or host.endswith(".spotify.com") or host == "music.apple.com" or host.endswith(".music.apple.com"):
+        raise ValueError("Это страница музыкального сервиса, а не аудиофайл. Пришли сам аудиофайл или прямую разрешённую ссылку на аудио.")
     trusted_hosts = {
         value.strip().lower()
         for value in os.environ.get("TRUSTED_AUDIO_HOSTS", "").split(",")
@@ -361,8 +365,8 @@ def main() -> None:
                         query = ""
 
                     if audio_url:
-                        telegram.send(chat, "Проверяю прямую ссылку и конвертирую в AAC-LC (.m4a)…")
                         audio_data, title = download_direct_audio(audio_url)
+                        telegram.send(chat, "Проверяю аудиофайл и конвертирую в AAC-LC (.m4a)…")
                         convert_and_send(telegram, chat, audio_data, title)
                     elif query:
                         results = search_tracks(query)

@@ -275,7 +275,6 @@
       currentAudioObjectUrl = "";
     }
     audioPlayer.classList.remove("hidden");
-    miniPlayer.classList.remove("youtube", "spotify");
     if (jamendoId) {
       audioPlayer.removeAttribute("src");
       audioPlayer.load();
