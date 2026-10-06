@@ -40,6 +40,12 @@
       </section>
 
       <section class="view" id="search-view">
+        <section class="radio-card" aria-label="Радио по настроению">
+          <div class="radio-heading"><div><p class="eyebrow section-eyebrow">竹 · BAMBOOK RADIO</p><h2>Музыка под настроение</h2></div><span class="radio-stamp">聴</span></div>
+          <p>Опиши вайб или выбери настроение — соберу очередь из доступных к прослушиванию треков.</p>
+          <div class="mood-chips"><button type="button" data-mood="спокойная музыка для отдыха, chill ambient">Тишина</button><button type="button" data-mood="энергичная музыка для тренировки, upbeat electronic">Энергия</button><button type="button" data-mood="грустная музыка, melancholy indie">Тоска</button><button type="button" data-mood="японский джаз, lo-fi вечерний вайб">Вечер</button></div>
+          <form class="radio-form" id="radio-form"><input id="radio-prompt" maxlength="120" placeholder="Например: дождливый Токио ночью" aria-label="Настроение или тема для радио" /><button type="submit">Собрать радио <span>↗</span></button></form>
+        </section>
         <div class="section-heading">
           <div><p class="eyebrow section-eyebrow">ДЛЯ ТЕБЯ</p><h2 id="results-heading">Популярные запросы</h2></div>
           <span class="section-caption" id="result-source">Выбери и начни поиск</span>
@@ -58,6 +64,16 @@
         <div class="results" id="results" aria-live="polite"></div>
       </section>
 
+      <section class="view hidden" id="radio-view">
+        <div class="section-heading"><div><p class="eyebrow section-eyebrow">НАСТРОЕНИЕ · ВАЙБ · ТЕМА</p><h2>Радио BamBook</h2></div><span class="section-caption">Новая очередь</span></div>
+        <section class="radio-card radio-page-card">
+          <p>Расскажи, что хочется слушать. Поиск соберёт доступные аудиотреки и добавит их в очередь.</p>
+          <form class="radio-form" id="radio-form-page"><input id="radio-prompt-page" maxlength="120" placeholder="Лесной дождь, фокус, ночная дорога…" aria-label="Настроение или тема для радио" /><button type="submit">Собрать <span>↗</span></button></form>
+          <div class="mood-chips"><button type="button" data-mood="спокойная музыка для отдыха, chill ambient">Тишина</button><button type="button" data-mood="энергичная музыка для тренировки, upbeat electronic">Энергия</button><button type="button" data-mood="грустная музыка, melancholy indie">Тоска</button><button type="button" data-mood="японский джаз, lo-fi вечерний вайб">Вечер</button></div>
+        </section>
+        <div class="queue-panel"><div class="queue-heading"><div><p class="eyebrow section-eyebrow">СЛЕДУЮТ ДАЛЬШЕ</p><h3>Очередь <span id="queue-count">0</span></h3></div><div class="queue-actions"><button type="button" id="shuffle-button" aria-pressed="false">⤨ Перемешать</button><button type="button" id="clear-queue">Очистить</button></div></div><ol id="queue-list" class="queue-list"></ol><p class="queue-empty" id="queue-empty">Очередь пуста. Запусти радио или добавь музыку из плейлиста.</p></div>
+      </section>
+
       <section class="view hidden" id="library-view">
         <div class="section-heading library-heading">
           <div><p class="eyebrow section-eyebrow">СОХРАНЁННОЕ</p><h2>Моя музыка</h2></div>
@@ -73,7 +89,7 @@
           </form>
           <div class="playlists-list" id="playlists-list"></div>
           <div class="playlist-detail hidden" id="playlist-detail">
-            <div class="playlist-detail-heading"><h3 id="playlist-detail-title"></h3><button class="playlist-delete" id="playlist-delete" type="button">Удалить</button></div>
+            <div class="playlist-detail-heading"><h3 id="playlist-detail-title"></h3><button class="playlist-play-all" id="playlist-play-all" type="button">▶ Играть</button><button class="playlist-delete" id="playlist-delete" type="button">Удалить</button></div>
             <div class="results" id="playlist-tracks" aria-live="polite"></div>
           </div>
         </div>
@@ -123,6 +139,7 @@
 
       <div class="mini-player" id="mini-player" aria-label="Плеер">
         <div class="mini-player-copy"><strong id="player-title">Выбери трек</strong><span id="player-artist">Полная версия или короткое превью</span></div>
+        <div class="player-controls"><button type="button" id="player-prev" aria-label="Предыдущий трек">‹</button><button type="button" id="player-next" aria-label="Следующий трек">›</button><button type="button" id="player-queue" aria-label="Открыть очередь">Очередь <span id="player-queue-count">0</span></button></div>
         <audio id="audio-player" controls preload="none"></audio>
         <iframe id="service-player" class="service-player hidden" title="Плеер музыкального сервиса" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
       </div>
@@ -131,6 +148,7 @@
 
     <nav class="bottom-nav" aria-label="Разделы BamBook">
       <button class="nav-item active" data-view="search" type="button" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13M9 10l11-2M6 21a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Zm11-2a3 2.5 0 1 0 0-5 3 2.5 0 0 0 0 5Z" /></svg><span>Музыка</span></button>
+      <button class="nav-item" data-view="radio" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5h18v10H3zM7 6l10 3.5M7 14h.01M11 14h.01M15 14h2"/><circle cx="18" cy="5" r="2"/></svg><span>Радио</span></button>
       <button class="nav-item" data-view="library" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.8h12a2 2 0 0 1 2 2V21l-8-4-8 4V5.8a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/></svg><span>Библиотека</span><b class="nav-count" id="nav-library-count">0</b></button>
       <button class="nav-item" data-view="account" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.5-3.3 2.7-5 7-5s6.5 1.7 7 5"/></svg><span>Аккаунт</span></button>
     </nav>

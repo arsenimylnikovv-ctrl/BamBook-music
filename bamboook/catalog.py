@@ -147,7 +147,7 @@ def _spotify_search(query: str, limit: int) -> list[dict[str, str]]:
 
 
 def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
-    """Search YouTube Music listings with yt-dlp metadata only (never download)."""
+    """Search regular YouTube video metadata; never download media."""
     import yt_dlp
 
     options = {
@@ -167,7 +167,7 @@ def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
             "artist": item.get("artist") or item.get("uploader") or item.get("channel") or "YouTube creator",
             "album": "",
             "url": item.get("webpage_url") or f"https://music.youtube.com/watch?v={item['id']}",
-            "source": "YouTube Music",
+            "source": "YouTube",
             "youtube_id": item["id"],
             "artwork": item.get("thumbnail", ""),
             "duration": _duration((item.get("duration") or 0) * 1000),
@@ -175,6 +175,39 @@ def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
         for item in (payload or {}).get("entries", [])
         if item and item.get("id") and item.get("title")
     ]
+
+
+def _youtube_music_search(query: str, limit: int) -> list[dict[str, str]]:
+    """Search YouTube Music's songs section via yt-dlp metadata only."""
+    import yt_dlp
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "playlistend": limit,
+        "noplaylist": True,
+        "socket_timeout": 10,
+    }
+    target = "https://music.youtube.com/search?" + urlencode({"q": query}) + "#songs"
+    with yt_dlp.YoutubeDL(options) as ydl:
+        payload = ydl.extract_info(target, download=False)
+    tracks = []
+    for item in (payload or {}).get("entries", []):
+        if not item or not item.get("id") or not item.get("title"):
+            continue
+        tracks.append({
+            "title": item.get("title", "Unknown track"),
+            "artist": item.get("artist") or item.get("uploader") or item.get("channel") or "YouTube Music",
+            "album": item.get("album") or "",
+            "url": item.get("webpage_url") or f"https://music.youtube.com/watch?v={item['id']}",
+            "source": "YouTube Music",
+            "youtube_id": item["id"],
+            "artwork": item.get("thumbnail", ""),
+            "duration": _duration((item.get("duration") or 0) * 1000),
+        })
+    return tracks
 
 
 def _soundcloud_search(query: str, limit: int) -> list[dict[str, str]]:
@@ -235,7 +268,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     if not query:
         return []
 
-    providers = (_itunes_search, _spotify_search, _youtube_search, _soundcloud_search, _jamendo_search)
+    providers = (_itunes_search, _spotify_search, _youtube_search, _youtube_music_search, _soundcloud_search, _jamendo_search)
     results: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = [executor.submit(provider, query, limit) for provider in providers]

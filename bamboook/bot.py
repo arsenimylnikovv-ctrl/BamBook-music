@@ -408,20 +408,19 @@ def main() -> None:
                         convert_and_send(telegram, chat, audio_data, title)
                     elif query:
                         results = search_tracks(query)
-                        pending[user] = results
                         if not results:
+                            pending[user] = []
                             telegram.send(chat, "Не нашёл совпадений в подключённых каталогах. Попробуй уточнить запрос.")
                         else:
                             audio_results = [
                                 (index, track) for index, track in enumerate(results, 1)
                                 if track.get("download_url") or track.get("preview_url")
                             ][:3]
+                            pending[user] = [track for _index, track in audio_results]
                             sent = 0
                             if audio_results:
-                                telegram.send(chat, "Нашёл аудио, которое можно отправить файлом:")
                                 for index, track in audio_results:
                                     try:
-                                        telegram.send(chat, f"{index}. {track['title']} — {track['artist']}")
                                         audio_data = (
                                             download_jamendo_track(track["download_url"])
                                             if track.get("download_url")
@@ -431,13 +430,11 @@ def main() -> None:
                                         sent += 1
                                     except Exception as error:
                                         log.warning("Could not send catalog audio (%s)", type(error).__name__)
-                                telegram.send(chat, "Чтобы сохранить результат в библиотеку, отправь /save и его номер." if sent else "Не удалось получить аудиофайл. Попробуй другой запрос или отправь свой аудиофайл.")
+                                if not sent:
+                                    pending[user] = []
+                                    telegram.send(chat, "Не удалось получить доступное аудио по этому запросу. Попробуй другой вариант или отправь свой аудиофайл.")
                             else:
-                                top = "\n".join(
-                                    f"{index}. {track['title']} — {track['artist']}"
-                                    for index, track in enumerate(results[:5], 1)
-                                )
-                                telegram.send(chat, "Не нашёл в подключённых источниках аудиофайла, который можно отправить.\n\n" + top + "\n\nСсылки не отправляю. Попробуй другой запрос или пришли свой аудиофайл.")
+                                telegram.send(chat, "По этому запросу пока нет аудио, которое можно отправить файлом. Попробуй уточнить запрос или пришли свой аудиофайл.")
                     elif command == "/save":
                         if not argument.isdigit() or not 1 <= int(argument) <= len(pending.get(user, [])):
                             telegram.send(chat, "Сначала найди трек командой /search, затем укажи его номер: /save 1")

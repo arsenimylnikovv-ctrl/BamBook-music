@@ -164,6 +164,12 @@ def make_handler(bot_token: str, database_path: str):
                         sc_host = (sc.hostname or "").lower()
                         if sc.scheme != "https" or not (sc_host == "soundcloud.com" or sc_host.endswith(".soundcloud.com")):
                             track["soundcloud_url"] = ""
+                    # Keep the Mini App focused on results that can actually
+                    # play in its unified dock; metadata-only matches become noise.
+                    tracks = [track for track in tracks if (
+                        track.get("preview_url") or track.get("jamendo_id")
+                        or track.get("youtube_id") or track.get("soundcloud_url")
+                    )]
                     self._json(200, {"tracks": tracks})
                 elif action == "library":
                     tracks = [

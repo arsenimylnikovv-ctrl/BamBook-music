@@ -28,6 +28,9 @@
   let playlists = [];
   let selectedPlaylistId = null;
   let accountState = null;
+  let playQueue = [];
+  let queueIndex = -1;
+  let shuffleEnabled = false;
   let toastTimer;
   let currentAudioObjectUrl = "";
 
@@ -106,12 +109,12 @@
     const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
     const hasSoundCloud = Boolean(safeSoundCloud(track.soundcloud_url));
     const canPlay = hasFullAudio || hasPreview || hasYoutube || hasSoundCloud;
-    const playLabel = hasSoundCloud ? "▶ SoundCloud" : hasYoutube ? "▶ YouTube" : hasFullAudio ? "▶ Полный трек" : hasPreview ? "▶ Превью" : "Нет аудио";
+    const playLabel = hasFullAudio ? "▶ Полный трек" : hasSoundCloud ? "▶ SoundCloud" : hasYoutube ? "▶ YouTube" : hasPreview ? "▶ Превью" : "Нет аудио";
     const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
     let action = "";
     if (kind === "search") {
       const options = playlists.map((item) => `<option value="${Number(item.id)}">${escapeHTML(item.name)}</option>`).join("");
-      action = `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button><select class="playlist-add-select" data-add-index="${index}" aria-label="Добавить в плейлист" ${playlists.length ? "" : "disabled"}><option value="">+ В плейлист</option>${options}</select>`;
+      action = `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button><button class="queue-add" data-queue-index="${index}" type="button" aria-label="Добавить ${escapeHTML(track.title)} в очередь">+ Очередь</button><select class="playlist-add-select" data-add-index="${index}" aria-label="Добавить в плейлист" ${playlists.length ? "" : "disabled"}><option value="">+ В плейлист</option>${options}</select>`;
     } else if (kind === "playlist") {
       action = `<button class="playlist-track-remove" data-remove-playlist-track="${Number(track.id)}" type="button">Убрать</button>`;
     } else {
@@ -290,7 +293,7 @@
     servicePlayer.src = "about:blank";
     servicePlayer.classList.add("hidden");
     miniPlayer.classList.remove("embed-active");
-    if (soundcloudUrl || youtubeId) {
+    if (!jamendoId && (soundcloudUrl || youtubeId)) {
       audioPlayer.removeAttribute("src");
       audioPlayer.load();
       audioPlayer.classList.add("hidden");
@@ -335,6 +338,99 @@
     }
   }
 
+  const queueStorageKey = `bambook-queue-${user?.id || "guest"}`;
+  try { playQueue = JSON.parse(localStorage.getItem(queueStorageKey) || "[]"); if (!Array.isArray(playQueue)) playQueue = []; }
+  catch { playQueue = []; }
+
+  function persistQueue() {
+    try { localStorage.setItem(queueStorageKey, JSON.stringify(playQueue)); } catch {}
+    renderQueue();
+  }
+
+  function renderQueue() {
+    const list = document.querySelector("#queue-list");
+    const empty = document.querySelector("#queue-empty");
+    if (!list || !empty) return;
+    document.querySelector("#queue-count").textContent = String(playQueue.length);
+    document.querySelector("#player-queue-count").textContent = String(playQueue.length);
+    empty.classList.toggle("hidden", playQueue.length > 0);
+    list.innerHTML = playQueue.map((track, index) => `<li class="queue-item ${index === queueIndex ? "is-current" : ""}"><button class="queue-play" data-queue-play="${index}" type="button"><span class="queue-number">${index === queueIndex ? "♫" : index + 1}</span><span><strong>${escapeHTML(track.title)}</strong><small>${escapeHTML(track.artist)}</small></span></button><span class="queue-item-actions"><button type="button" data-queue-move="${index}" data-direction="-1" aria-label="Переместить выше" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-queue-move="${index}" data-direction="1" aria-label="Переместить ниже" ${index === playQueue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-queue-remove="${index}" aria-label="Убрать из очереди">×</button></span></li>`).join("");
+    document.querySelector("#shuffle-button").setAttribute("aria-pressed", String(shuffleEnabled));
+  }
+
+  function addToQueue(track, playNow = false) {
+    if (!track) return;
+    playQueue.push(track);
+    persistQueue();
+    if (playNow || queueIndex < 0) playQueueAt(playQueue.length - 1);
+    else showToast("Добавлено в очередь");
+  }
+
+  function playQueueAt(index) {
+    if (index < 0 || index >= playQueue.length) return;
+    queueIndex = index;
+    persistQueue();
+    playTrack(playQueue[index]);
+  }
+
+  function playNext(direction = 1) {
+    if (!playQueue.length) return;
+    let next = queueIndex + direction;
+    if (next < 0) next = playQueue.length - 1;
+    if (next >= playQueue.length) next = 0;
+    playQueueAt(next);
+  }
+
+  async function startRadio(prompt) {
+    const text = String(prompt || "").trim();
+    if (!text) { showToast("Опиши настроение или тему"); return; }
+    showToast("Подбираю музыку под твой вайб…");
+    const variants = [text, `${text} music`, `${text} indie electronic jazz`];
+    try {
+      const batches = await Promise.all(variants.map((query) => api("search", { query })));
+      const seen = new Set();
+      const tracks = batches.flatMap((batch) => batch.tracks || []).filter((track) => {
+        const key = `${track.artist} ${track.title}`.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+        if (!key || seen.has(key) || !(track.jamendo_id || safePreview(track.preview_url) || track.youtube_id || safeSoundCloud(track.soundcloud_url))) return false;
+        seen.add(key); return true;
+      }).slice(0, 18);
+      if (!tracks.length) { showToast("Не нашёл доступных для плеера треков. Попробуй другой вайб."); return; }
+      playQueue = tracks;
+      queueIndex = -1;
+      persistQueue();
+      setView("radio");
+      playQueueAt(0);
+      showToast(`Радио готово · ${tracks.length} треков в очереди`);
+    } catch (error) { showToast(error.message); }
+  }
+
+  function shuffleQueue() {
+    const start = queueIndex >= 0 ? queueIndex + 1 : 0;
+    const rest = playQueue.slice(start);
+    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+    playQueue.splice(start, rest.length, ...rest);
+    shuffleEnabled = !shuffleEnabled;
+    persistQueue();
+  }
+
+  renderQueue();
+  audioPlayer.addEventListener("ended", () => { if (queueIndex >= 0) playNext(1); });
+  document.querySelector("#player-next").addEventListener("click", () => playNext(1));
+  document.querySelector("#player-prev").addEventListener("click", () => playNext(-1));
+  document.querySelector("#player-queue").addEventListener("click", () => setView("radio"));
+  document.querySelector("#shuffle-button").addEventListener("click", shuffleQueue);
+  document.querySelector("#clear-queue").addEventListener("click", () => { playQueue = []; queueIndex = -1; persistQueue(); audioPlayer.pause(); servicePlayer.src = "about:blank"; showToast("Очередь очищена"); });
+  document.querySelectorAll("#radio-form, #radio-form-page").forEach((radioForm) => radioForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const prompt = radioForm.querySelector("input").value;
+    document.querySelectorAll("#radio-prompt, #radio-prompt-page").forEach((input) => { input.value = prompt; });
+    startRadio(prompt);
+  }));
+  document.body.addEventListener("click", (event) => {
+    const mood = event.target.closest("[data-mood]");
+    if (mood) { document.querySelectorAll("#radio-prompt, #radio-prompt-page").forEach((input) => { input.value = mood.dataset.mood; }); startRadio(mood.dataset.mood); }
+  });
+
   function openLink(url) {
     const safe = safeLink(url);
     if (!safe) return;
@@ -354,14 +450,35 @@
     const playButton = event.target.closest("[data-play-kind]");
     if (playButton) {
       const groups = { search: currentTracks, library: libraryTracks, playlist: currentPlaylistTracks };
-      playTrack(groups[playButton.dataset.playKind]?.[Number(playButton.dataset.playIndex)]);
+      const track = groups[playButton.dataset.playKind]?.[Number(playButton.dataset.playIndex)];
+      playQueue = [track].filter(Boolean); queueIndex = 0; persistQueue(); playQueueAt(0);
       return;
+    }
+    const queuePlay = event.target.closest("[data-queue-play]");
+    if (queuePlay) { playQueueAt(Number(queuePlay.dataset.queuePlay)); return; }
+    const queueAdd = event.target.closest("[data-queue-index]");
+    if (queueAdd) { addToQueue(currentTracks[Number(queueAdd.dataset.queueIndex)]); return; }
+    const queueMove = event.target.closest("[data-queue-move]");
+    if (queueMove) {
+      const index = Number(queueMove.dataset.queueMove), next = index + Number(queueMove.dataset.direction);
+      if (next >= 0 && next < playQueue.length) { [playQueue[index], playQueue[next]] = [playQueue[next], playQueue[index]]; if (queueIndex === index) queueIndex = next; else if (queueIndex === next) queueIndex = index; persistQueue(); }
+      return;
+    }
+    const queueRemove = event.target.closest("[data-queue-remove]");
+    if (queueRemove) {
+      const index = Number(queueRemove.dataset.queueRemove); playQueue.splice(index, 1);
+      if (index < queueIndex) queueIndex--; else if (index === queueIndex) { queueIndex = -1; if (playQueue.length) playQueueAt(Math.min(index, playQueue.length - 1)); else { audioPlayer.pause(); servicePlayer.src = "about:blank"; } }
+      persistQueue(); return;
     }
     const openPlaylistButton = event.target.closest("[data-open-playlist]");
     if (openPlaylistButton) {
       try { await openPlaylist(Number(openPlaylistButton.dataset.openPlaylist)); }
       catch (error) { showToast(error.message); }
       return;
+    }
+    if (event.target.closest("#playlist-play-all")) {
+      if (!currentPlaylistTracks.length) { showToast("В этом плейлисте пока нет треков"); return; }
+      playQueue = [...currentPlaylistTracks]; queueIndex = -1; persistQueue(); playQueueAt(0); return;
     }
     const deletePlaylistButton = event.target.closest("[data-delete-playlist]");
     if (deletePlaylistButton) {
@@ -417,22 +534,25 @@
     currentView = view;
     const library = view === "library";
     const account = view === "account";
+    const radio = view === "radio";
     navItems.forEach((item) => {
       const active = item.dataset.view === view;
       item.classList.toggle("active", active);
       if (active) item.setAttribute("aria-current", "page");
       else item.removeAttribute("aria-current");
     });
-    document.querySelector("#search-view").classList.toggle("hidden", library || account);
+    document.querySelector("#search-view").classList.toggle("hidden", library || account || radio);
+    document.querySelector("#radio-view").classList.toggle("hidden", !radio);
     document.querySelector("#library-view").classList.toggle("hidden", !library);
     document.querySelector("#account-view").classList.toggle("hidden", !account);
-    searchArea.classList.toggle("hidden", library || account);
+    searchArea.classList.toggle("hidden", library || account || radio);
     pageTitle.innerHTML = library
       ? 'Библиотека<span class="title-period">.</span>'
-      : account ? 'Аккаунт<span class="title-period">.</span>' : 'Музыка<span class="title-period">.</span>';
+      : account ? 'Аккаунт<span class="title-period">.</span>' : radio ? 'Радио<span class="title-period">.</span>' : 'Музыка<span class="title-period">.</span>';
     pageDescription.innerHTML = library
       ? "Всё, что ты сохранил,<br class=\"wide-only\" /> всегда под рукой."
       : account ? "Подключай источники<br class=\"wide-only\" /> и управляй своим планом."
+        : radio ? "Своя волна из музыки<br class=\"wide-only\" /> под настроение."
         : "Ищи любимые треки и собирай<br class=\"wide-only\" /> свою коллекцию в одном месте.";
     if (library) loadLibrary();
     if (account) loadAccount().catch((error) => showToast(error.message));
