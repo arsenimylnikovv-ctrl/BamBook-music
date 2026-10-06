@@ -18,6 +18,7 @@
   const playlistTracksView = document.querySelector("#playlist-tracks");
   const miniPlayer = document.querySelector("#mini-player");
   const audioPlayer = document.querySelector("#audio-player");
+  const servicePlayer = document.querySelector("#service-player");
   const pageTitle = document.querySelector("#page-title");
   const pageDescription = document.querySelector("#page-description");
   let currentView = "search";
@@ -87,6 +88,13 @@
     } catch { return ""; }
   }
 
+  function safeSoundCloud(value) {
+    const safe = safeLink(value);
+    if (!safe) return "";
+    const host = new URL(safe).hostname.toLowerCase();
+    return host === "soundcloud.com" || host.endsWith(".soundcloud.com") ? safe : "";
+  }
+
   function bookmarkIcon() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>';
   }
@@ -95,8 +103,10 @@
     const art = safeLink(track.artwork);
     const hasPreview = Boolean(safePreview(track.preview_url));
     const hasFullAudio = /^\d{1,12}$/.test(String(track.jamendo_id || ""));
-    const canPlay = hasFullAudio || hasPreview;
-    const playLabel = hasFullAudio ? "▶ Полный трек" : hasPreview ? "▶ Превью" : "Нет аудио";
+    const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
+    const hasSoundCloud = Boolean(safeSoundCloud(track.soundcloud_url));
+    const canPlay = hasFullAudio || hasPreview || hasYoutube || hasSoundCloud;
+    const playLabel = hasSoundCloud ? "▶ SoundCloud" : hasYoutube ? "▶ YouTube" : hasFullAudio ? "▶ Полный трек" : hasPreview ? "▶ Превью" : "Нет аудио";
     const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
     let action = "";
     if (kind === "search") {
@@ -265,7 +275,9 @@
   async function playTrack(track) {
     const preview = safePreview(track?.preview_url);
     const jamendoId = /^\d{1,12}$/.test(String(track?.jamendo_id || "")) ? String(track.jamendo_id) : "";
-    if (!preview && !jamendoId) { showToast("Встроенное аудио для этого результата недоступно"); return; }
+    const youtubeId = /^[A-Za-z0-9_-]{6,20}$/.test(track?.youtube_id || "") ? track.youtube_id : "";
+    const soundcloudUrl = safeSoundCloud(track?.soundcloud_url);
+    if (!preview && !jamendoId && !youtubeId && !soundcloudUrl) { showToast("Для этого результата нет доступного плеера"); return; }
     document.querySelector("#player-title").textContent = track.title;
     document.querySelector("#player-artist").textContent = track.artist;
     miniPlayer.classList.add("active");
@@ -275,7 +287,27 @@
       currentAudioObjectUrl = "";
     }
     audioPlayer.classList.remove("hidden");
-    if (jamendoId) {
+    servicePlayer.src = "about:blank";
+    servicePlayer.classList.add("hidden");
+    miniPlayer.classList.remove("embed-active");
+    if (soundcloudUrl || youtubeId) {
+      audioPlayer.removeAttribute("src");
+      audioPlayer.load();
+      audioPlayer.classList.add("hidden");
+      servicePlayer.classList.remove("hidden");
+      miniPlayer.classList.add("embed-active");
+      if (soundcloudUrl) {
+        const params = new URLSearchParams({ url: soundcloudUrl, auto_play: "true", show_artwork: "true", show_user: "true", show_comments: "false", sharing: "false", download: "false", color: "94d82d" });
+        servicePlayer.title = "SoundCloud · " + track.title;
+        servicePlayer.src = `https://w.soundcloud.com/player/?${params.toString()}`;
+        miniPlayer.classList.remove("video-player");
+      } else {
+        servicePlayer.title = "YouTube · " + track.title;
+        servicePlayer.src = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&controls=1&playsinline=1&rel=0`;
+        miniPlayer.classList.add("video-player");
+      }
+    } else if (jamendoId) {
+      miniPlayer.classList.remove("video-player");
       audioPlayer.removeAttribute("src");
       audioPlayer.load();
       showToast("Загружаю полный трек…");
@@ -297,6 +329,7 @@
         showToast(error.message || "Не удалось загрузить полный трек");
       }
     } else {
+      miniPlayer.classList.remove("video-player");
       audioPlayer.src = preview;
       audioPlayer.play().catch(() => showToast("Нажми ▶ в плеере, чтобы начать прослушивание"));
     }
@@ -459,3 +492,4 @@
   if (!initData) showToast("Открой приложение из чата с BamBook");
   else loadLibrary();
 })();
+

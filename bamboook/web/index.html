@@ -36,7 +36,7 @@
           <input id="query" name="query" autocomplete="off" enterkeyhint="search" placeholder="Исполнитель или трек" maxlength="160" aria-label="Исполнитель или название трека" />
           <button class="search-button" id="search-button" type="submit"><span>Найти</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
         </form>
-        <div class="catalog-note"><span class="catalog-spark">✳</span> Apple Music <i></i> Spotify <i></i> YouTube Music</div>
+        <div class="catalog-note"><span class="catalog-spark">✳</span> Apple Music <i></i> Spotify <i></i> YouTube <i></i> SoundCloud</div>
       </section>
 
       <section class="view" id="search-view">
@@ -103,7 +103,8 @@
           <p class="import-hint">Импортируй ссылки на свои подборки. Полное подключение аккаунтов появится для сервисов с доступным официальным API.</p>
           <div class="service-grid">
             <div class="service-pill"><strong>Spotify</strong><span>Музыка</span></div><div class="service-pill"><strong>Яндекс Музыка</strong><span>Музыка</span></div>
-            <div class="service-pill"><strong>YouTube Music</strong><span>Музыка</span></div><div class="service-pill"><strong>Apple Music</strong><span>Музыка</span></div>
+            <div class="service-pill"><strong>YouTube Music</strong><span>Музыка</span></div><div class="service-pill"><strong>SoundCloud</strong><span>Музыка</span></div>
+            <div class="service-pill"><strong>Apple Music</strong><span>Музыка</span></div>
             <div class="service-pill"><strong>Литрес</strong><span>Аудиокниги</span></div><div class="service-pill"><strong>Storytel</strong><span>Аудиокниги</span></div>
           </div>
           <div class="import-panel">
@@ -123,6 +124,7 @@
       <div class="mini-player" id="mini-player" aria-label="Плеер">
         <div class="mini-player-copy"><strong id="player-title">Выбери трек</strong><span id="player-artist">Полная версия или короткое превью</span></div>
         <audio id="audio-player" controls preload="none"></audio>
+        <iframe id="service-player" class="service-player hidden" title="Плеер музыкального сервиса" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
       </div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </main>
@@ -134,3 +136,4 @@
     </nav>
   </body>
 </html>
+

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -216,6 +217,38 @@ def format_track(track: tuple, index: int) -> str:
     return f"{index}. {title} — {artist}{extra}"
 
 
+def answer_guest_search(telegram: Telegram, message: dict, bot_username: str) -> None:
+    """Reply once to a Telegram Guest Mode query with a compact search result."""
+    query_id = str(message.get("guest_query_id", ""))
+    if not query_id:
+        return
+    text = str(message.get("text", "")).strip()
+    if bot_username:
+        text = re.sub(rf"@{re.escape(bot_username)}\b", " ", text, flags=re.IGNORECASE)
+    text = " ".join(text.split())
+    if text.startswith("/"):
+        command, _, argument = text.partition(" ")
+        if command.split("@", 1)[0].lower() in ("/search", "/start", "/help"):
+            text = argument.strip()
+    if not text or message.get("from", {}).get("is_bot"):
+        response = "Для поиска упомяни BamBook и добавь название трека или исполнителя. Guest Mode отвечает одним сообщением и не открывает личные плейлисты."
+    else:
+        results = search_tracks(text, limit=3)
+        if results:
+            lines = [f"{i}. {item['title']} — {item['artist']}" for i, item in enumerate(results[:3], 1)]
+            response = "Нашёл в музыкальных каталогах:\n" + "\n".join(lines) + "\n\nЧтобы прослушать и сохранить в свой плейлист, открой BamBook в личном чате с ботом."
+        else:
+            response = "Не нашёл совпадений. Попробуй написать точнее: исполнитель и название трека."
+    result = {
+        "type": "article",
+        "id": query_id,
+        "title": "BamBook · поиск музыки",
+        "description": "Результаты поиска по музыкальным каталогам",
+        "input_message_content": {"message_text": response},
+    }
+    telegram.call("answerGuestQuery", {"guest_query_id": query_id, "result": json.dumps(result, ensure_ascii=False)})
+
+
 def main() -> None:
     load_env()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -224,7 +257,8 @@ def main() -> None:
     telegram = Telegram(token)
     # Fail deployment immediately for an invalid token instead of reporting
     # healthy while the long-poll loop retries Telegram forever.
-    telegram.call("getMe", {})
+    bot_info = telegram.call("getMe", {})
+    bot_username = str(bot_info.get("username", ""))
     database_path = os.environ.get("DATABASE_PATH", "data/bambook.sqlite3")
     library = Library(database_path)
     web_port = int(os.environ.get("PORT", os.environ.get("WEBAPP_PORT", "8080")))
@@ -260,9 +294,13 @@ def main() -> None:
 
     while True:
         try:
-            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message","pre_checkout_query","channel_post"]'})
+            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message","pre_checkout_query","channel_post","guest_message"]'})
             for update in updates:
                 offset = update["update_id"] + 1
+                guest_message = update.get("guest_message")
+                if guest_message:
+                    answer_guest_search(telegram, guest_message, bot_username)
+                    continue
                 if update.get("channel_post"):
                     library.save_news_post(update["channel_post"])
                     continue
@@ -514,3 +552,4 @@ def main() -> None:
         except (HTTPError, URLError, TimeoutError) as error:
             log.warning("Polling failed: %s", error)
             time.sleep(3)
+

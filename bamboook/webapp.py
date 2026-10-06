@@ -160,10 +160,14 @@ def make_handler(bot_token: str, database_path: str):
                         # delivery path; the Mini App only needs catalog metadata.
                         track.pop("download_url", None)
                         track.pop("audio_url", None)
+                        sc = urlsplit(str(track.get("soundcloud_url", "")))
+                        sc_host = (sc.hostname or "").lower()
+                        if sc.scheme != "https" or not (sc_host == "soundcloud.com" or sc_host.endswith(".soundcloud.com")):
+                            track["soundcloud_url"] = ""
                     self._json(200, {"tracks": tracks})
                 elif action == "library":
                     tracks = [
-                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11]}
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11], "soundcloud_url": row[12]}
                         for row in library.list_tracks(user_id)
                     ]
                     self._json(200, {"tracks": tracks})
@@ -183,7 +187,7 @@ def make_handler(bot_token: str, database_path: str):
                         self._json(404, {"error": "Плейлист не найден"})
                         return
                     tracks = [
-                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11]}
+                        {"id": row[0], "title": row[1], "artist": row[2], "album": row[3], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10], "jamendo_id": row[11], "soundcloud_url": row[12]}
                         for row in library.list_playlist_tracks(user_id, playlist_id)
                     ]
                     self._json(200, {"tracks": tracks})
@@ -228,6 +232,7 @@ def make_handler(bot_token: str, database_path: str):
                         "duration": str(track.get("duration", ""))[:12],
                         "preview_url": str(track.get("preview_url", ""))[:1000],
                         "jamendo_id": str(track.get("jamendo_id", "")) if re.fullmatch(r"\d{1,12}", str(track.get("jamendo_id", ""))) else "",
+                        "soundcloud_url": str(track.get("soundcloud_url", ""))[:1000] if (urlsplit(str(track.get("soundcloud_url", ""))).scheme == "https" and ((urlsplit(str(track.get("soundcloud_url", ""))).hostname or "").lower() == "soundcloud.com" or (urlsplit(str(track.get("soundcloud_url", ""))).hostname or "").lower().endswith(".soundcloud.com"))) else "",
                         "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
                         "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
                     }
@@ -329,6 +334,7 @@ def make_handler(bot_token: str, database_path: str):
                         "duration": str(track.get("duration", ""))[:12],
                         "preview_url": str(track.get("preview_url", ""))[:1000],
                         "jamendo_id": str(track.get("jamendo_id", "")) if re.fullmatch(r"\d{1,12}", str(track.get("jamendo_id", ""))) else "",
+                        "soundcloud_url": str(track.get("soundcloud_url", ""))[:1000] if (urlsplit(str(track.get("soundcloud_url", ""))).scheme == "https" and ((urlsplit(str(track.get("soundcloud_url", ""))).hostname or "").lower() == "soundcloud.com" or (urlsplit(str(track.get("soundcloud_url", ""))).hostname or "").lower().endswith(".soundcloud.com"))) else "",
                         "youtube_id": str(track.get("youtube_id", "")) if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", str(track.get("youtube_id", ""))) else "",
                         "spotify_id": str(track.get("spotify_id", "")) if re.fullmatch(r"[A-Za-z0-9]{22}", str(track.get("spotify_id", ""))) else "",
                     }
@@ -364,3 +370,4 @@ def start_webapp(bot_token: str, database_path: str, host: str = "0.0.0.0", port
     server = ThreadingHTTPServer((host, port), make_handler(bot_token, database_path))
     server.daemon_threads = True
     return server
+

@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 _spotify_token: str | None = None
@@ -177,6 +177,43 @@ def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
     ]
 
 
+def _soundcloud_search(query: str, limit: int) -> list[dict[str, str]]:
+    """Search SoundCloud metadata; playback uses SoundCloud's official widget."""
+    import yt_dlp
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "playlistend": limit,
+        "noplaylist": True,
+        "socket_timeout": 10,
+    }
+    with yt_dlp.YoutubeDL(options) as ydl:
+        payload = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+    tracks = []
+    for item in (payload or {}).get("entries", []):
+        if not item or not item.get("title"):
+            continue
+        url = item.get("webpage_url") or item.get("url") or ""
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (host == "soundcloud.com" or host.endswith(".soundcloud.com")):
+            continue
+        tracks.append({
+            "title": item.get("title", "Unknown track"),
+            "artist": item.get("artist") or item.get("uploader") or item.get("creator") or "SoundCloud creator",
+            "album": "",
+            "url": url,
+            "source": "SoundCloud",
+            "soundcloud_url": url,
+            "artwork": item.get("thumbnail", ""),
+            "duration": _duration((item.get("duration") or 0) * 1000),
+        })
+    return tracks
+
+
 def _normalize(value: str) -> str:
     value = re.sub(r"\([^)]*(official|lyrics|audio|video|remaster)[^)]*\)", " ", value, flags=re.I)
     return " ".join(re.findall(r"[\w]+", value.casefold()))
@@ -198,7 +235,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     if not query:
         return []
 
-    providers = (_itunes_search, _spotify_search, _youtube_search, _jamendo_search)
+    providers = (_itunes_search, _spotify_search, _youtube_search, _soundcloud_search, _jamendo_search)
     results: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = [executor.submit(provider, query, limit) for provider in providers]
@@ -228,8 +265,9 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 combined.update(track)
                 combined["links"] = links
             else:
-                for field in ("preview_url", "youtube_id", "spotify_id", "download_url", "jamendo_id", "license"):
+                for field in ("preview_url", "youtube_id", "spotify_id", "soundcloud_url", "download_url", "jamendo_id", "license"):
                     if not combined.get(field) and track.get(field):
                         combined[field] = track[field]
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)
     return ranked[: limit * 2]
+
