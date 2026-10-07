@@ -104,14 +104,29 @@ def _get_spotify_token() -> str | None:
 
 
 def _spotify_search(query: str, limit: int) -> list[dict[str, str]]:
-    token = _get_spotify_token()
-    if not token:
-        return []
-    params = urlencode({"q": query, "type": "track", "limit": limit, "market": "US"})
-    payload = _json_request(
-        f"https://api.spotify.com/v1/search?{params}",
-        {"Authorization": f"Bearer {token}"},
-    )
+    import logging
+
+    try:
+        token = _get_spotify_token()
+        if not token:
+            return []
+        params = urlencode({"q": query, "type": "track", "limit": min(limit, 10), "market": "US"})
+        payload = _json_request(
+            f"https://api.spotify.com/v1/search?{params}",
+            {"Authorization": f"Bearer {token}"},
+        )
+    except HTTPError as error:
+        # Log only Spotify's short error message, never request headers or credentials.
+        try:
+            detail = json.loads(error.read(4096).decode("utf-8")).get("error", {}).get("message", "")
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            detail = ""
+        logging.getLogger("bambook.catalog").warning(
+            "Spotify API denied catalog request (HTTP %s): %s",
+            error.code,
+            str(detail)[:240] or "no error message returned",
+        )
+        raise
     tracks = payload.get("tracks", {}).get("items", [])
     return [
         {
