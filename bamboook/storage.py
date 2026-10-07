@@ -37,6 +37,18 @@ class Library:
                     cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY(source, source_track_id)
                 );
+                CREATE TABLE IF NOT EXISTS audio_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at REAL NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_audio_jobs_queue ON audio_jobs(status,next_attempt_at,id);
                 CREATE TABLE IF NOT EXISTS imports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -133,6 +145,67 @@ class Library:
                 "DELETE FROM telegram_audio_cache WHERE source=? AND source_track_id=?",
                 (source[:40], source_track_id[:100]),
             )
+
+    def enqueue_audio_job(self, chat_id: int, payload: str) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                "INSERT INTO audio_jobs(chat_id,payload) VALUES(?,?)",
+                (chat_id, payload),
+            )
+            return int(cursor.lastrowid)
+
+    def recover_interrupted_audio_jobs(self) -> None:
+        """Return jobs claimed by a previous process to the durable queue."""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE audio_jobs SET status='queued',next_attempt_at=0,updated_at=CURRENT_TIMESTAMP "
+                "WHERE status='processing'"
+            )
+
+    def prune_audio_jobs(self, retention_days: int = 30) -> None:
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM audio_jobs WHERE status IN ('done','failed') "
+                "AND created_at < datetime('now', ?)",
+                (f"-{max(1, min(365, retention_days))} days",),
+            )
+
+    def claim_audio_job(self) -> tuple[int, int, str, int] | None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT id,chat_id,payload,attempts FROM audio_jobs "
+                "WHERE status='queued' AND next_attempt_at<=? ORDER BY id LIMIT 1",
+                (time.time(),),
+            ).fetchone()
+            if not row:
+                db.commit()
+                return None
+            job_id, chat_id, payload, attempts = row
+            attempts += 1
+            db.execute(
+                "UPDATE audio_jobs SET status='processing',attempts=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (attempts, job_id),
+            )
+            db.commit()
+            return int(job_id), int(chat_id), str(payload), int(attempts)
+
+    def finish_audio_job(self, job_id: int) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE audio_jobs SET status='done',last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (job_id,),
+            )
+
+    def retry_audio_job(self, job_id: int, attempts: int, error_name: str, max_attempts: int = 3) -> bool:
+        retry = attempts < max_attempts
+        delay = min(300, 20 * (2 ** max(0, attempts - 1)))
+        with self._connect() as db:
+            db.execute(
+                "UPDATE audio_jobs SET status=?,next_attempt_at=?,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                ("queued" if retry else "failed", time.time() + delay if retry else 0, error_name[:120], job_id),
+            )
+        return retry
 
     def is_premium(self, user_id: int, now: int | None = None) -> bool:
         current = int(time.time()) if now is None else now
