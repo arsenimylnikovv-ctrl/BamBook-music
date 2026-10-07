@@ -330,6 +330,41 @@
     seek.value = String(duration ? Math.round(current / duration * 1000) : 0);
     document.querySelector("#player-elapsed").textContent = formatTime(current);
     document.querySelector("#player-remaining").textContent = `−${formatTime(Math.max(0, duration - current))}`;
+    updateMediaPosition(current, duration);
+  }
+
+  function updateMediaSession(track = currentPlayingTrack, playing = !audioPlayer.paused) {
+    if (!("mediaSession" in navigator) || !track || activePlayerSource !== "audio") return;
+    if ("MediaMetadata" in window) {
+      const artwork = safeLink(track.artwork);
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title || "BamBook",
+        artist: track.artist || "",
+        album: track.album || "",
+        artwork: artwork ? [96, 128, 192, 256, 384, 512].map((size) => ({ src: artwork, sizes: `${size}x${size}` })) : [],
+      });
+    }
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    updateMediaPosition(audioPlayer.currentTime || 0, audioPlayer.duration || 0);
+  }
+
+  function updateMediaPosition(current, duration) {
+    if (!("mediaSession" in navigator) || activePlayerSource !== "audio" || !duration || !Number.isFinite(duration)) return;
+    try {
+      navigator.mediaSession.setPositionState({ duration, playbackRate: audioPlayer.playbackRate || 1, position: Math.min(current, duration) });
+    } catch { /* Position state is optional in older Telegram WebViews. */ }
+  }
+
+  if ("mediaSession" in navigator) {
+    for (const [action, handler] of Object.entries({
+      play: () => togglePlayback(),
+      pause: () => togglePlayback(),
+      nexttrack: () => playNext(1),
+      previoustrack: () => playNext(-1),
+      seekto: (details) => { if (activePlayerSource === "audio" && Number.isFinite(details.seekTime)) audioPlayer.currentTime = details.seekTime; },
+    })) {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Unsupported action. */ }
+    }
   }
 
   function loadYoutubePlayer(videoId) {
@@ -375,7 +410,12 @@
     const attribution = sources.includes("Spotify") ? `Spotify · ${provider}` : provider;
     document.querySelector("#player-source-label").textContent = `СЕЙЧАС ИГРАЕТ · ${attribution}`;
     document.querySelector("#player-save").disabled = !track.url;
-    document.querySelector("#player-footer-source").textContent = video ? "Официальный видеоплеер YouTube" : "Полный трек · Jamendo";
+    document.querySelector("#player-footer-source").textContent = video
+      ? (track.spotify_id ? "Для фона передай трек в Spotify" : "YouTube в Mini App · фонового режима нет")
+      : "Полный трек · Jamendo · системное управление";
+    const spotifyButton = document.querySelector("#spotify-handoff");
+    spotifyButton.classList.toggle("hidden", !track.spotify_id && !video);
+    spotifyButton.textContent = track.spotify_id ? "Открыть трек в Spotify ↗" : "Найти в Spotify ↗";
     showPlayerArtwork(track, video);
     miniPlayer.classList.add("active");
     openPlayer();
@@ -491,8 +531,8 @@
   audioPlayer.addEventListener("ended", () => { if (queueIndex >= 0) playNext(1); });
   audioPlayer.addEventListener("timeupdate", updateProgress);
   audioPlayer.addEventListener("loadedmetadata", updateProgress);
-  audioPlayer.addEventListener("play", () => updatePlayButtons(true));
-  audioPlayer.addEventListener("pause", () => updatePlayButtons(false));
+  audioPlayer.addEventListener("play", () => { updatePlayButtons(true); updateMediaSession(currentPlayingTrack, true); });
+  audioPlayer.addEventListener("pause", () => { updatePlayButtons(false); updateMediaSession(currentPlayingTrack, false); });
   document.querySelector("#player-next").addEventListener("click", () => playNext(1));
   document.querySelector("#player-prev").addEventListener("click", () => playNext(-1));
   document.querySelector("#player-queue").addEventListener("click", () => { if (activePlayerSource === "youtube") closePlayer(); setView("radio"); });
@@ -516,6 +556,15 @@
     const level = Number(event.target.value);
     audioPlayer.volume = level / 100;
     youtubePlayer?.setVolume?.(level);
+  });
+  document.querySelector("#spotify-handoff").addEventListener("click", () => {
+    if (!currentPlayingTrack) return;
+    const spotifyId = /^[A-Za-z0-9]{22}$/.test(currentPlayingTrack.spotify_id || "") ? currentPlayingTrack.spotify_id : "";
+    const spotifyUrl = spotifyId
+      ? `https://open.spotify.com/track/${spotifyId}`
+      : `https://open.spotify.com/search/${encodeURIComponent(`${currentPlayingTrack.artist || ""} ${currentPlayingTrack.title || ""}`.trim())}`;
+    showToast("Открываю Spotify. Запусти трек там, чтобы слушать с выключенным экраном.");
+    openLink(spotifyUrl);
   });
   document.querySelector("#player-save").addEventListener("click", async () => {
     if (!currentPlayingTrack) return;
