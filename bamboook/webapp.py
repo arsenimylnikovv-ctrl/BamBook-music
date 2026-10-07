@@ -114,6 +114,10 @@ def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str, database_pa
         try:
             telegram_api(bot_token, "sendAudio", {
                 "chat_id": user_id, "audio": file_id, "title": title, "performer": artist,
+                "reply_markup": json.dumps({"inline_keyboard": [[{
+                    "text": "＋ В плейлист",
+                    "callback_data": f"playlist:add:{track_id}",
+                }]]}, ensure_ascii=False),
             })
             return
         except Exception as error:
@@ -138,7 +142,11 @@ def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str, database_pa
             raise ValueError("После конвертации файл превышает лимит Telegram 50 МБ")
         boundary = "BamBook" + secrets.token_hex(16)
         parts = []
-        for name, value in (("chat_id", str(user_id)), ("title", title), ("performer", artist)):
+        playlist_markup = json.dumps({"inline_keyboard": [[{
+            "text": "＋ В плейлист",
+            "callback_data": f"playlist:add:{track_id}",
+        }]]}, ensure_ascii=False)
+        for name, value in (("chat_id", str(user_id)), ("title", title), ("performer", artist), ("reply_markup", playlist_markup)):
             parts.extend([
                 f"--{boundary}\r\n".encode(),
                 f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
