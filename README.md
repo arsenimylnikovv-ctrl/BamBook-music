@@ -71,7 +71,7 @@ python -m bamboook
 
 Бот автоматически задаёт кнопку меню. Чтобы проверить или указать её вручную: `@BotFather` → `/mybots` → BamBook → **Bot Settings → Menu Button → Configure menu button**. Задай подпись `BamBook` и HTTPS-домен Railway без `/health`. Затем открой бота, нажми **Start** или отправь `/start`, и открой кнопку возле поля ввода. Кнопку на профиле можно отдельно настроить через **Configure Main Mini App**, это необязательно.
 
-Spotify подключается переменными `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` в Railway → **Variables**, после чего нужно развернуть сервис заново.
+Spotify подключается переменными `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` в Railway → **Variables**, после чего нужно развернуть сервис заново. Сейчас эти ключи используются для поиска и сопоставления треков. Spotify Web Playback SDK тоже играет в браузере, требует Premium и не решает надёжно остановку Mini App в фоне. Для продолжения найденного трека при выключенном экране нажми **«Продолжить в Spotify»** в плеере: откроется Spotify-приложение, если оно установлено и в нём выполнен вход. Для аудио, которое играет непосредственно в BamBook, Mini App передаёт название, обложку и кнопки play/pause/следующий/предыдущий на системный экран блокировки через Media Session API; доступность фонового воспроизведения зависит от Telegram и ОС.
 
 Jamendo подключается переменной `JAMENDO_CLIENT_ID` в Railway → **Variables**. Создай приложение в [Jamendo Developer Portal](https://devportal.jamendo.com/), скопируй выданный Client ID и добавь его в Railway. После redeploy бот будет искать и отправлять только треки с лицензией CC0, для которых Jamendo явно разрешил скачивание. Без этой переменной поиск просто не включает Jamendo.
 
