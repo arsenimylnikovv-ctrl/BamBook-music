@@ -8,6 +8,9 @@ import json
 import logging
 import os
 import re
+import secrets
+import subprocess
+import tempfile
 import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -57,6 +60,92 @@ def validate_init_data(init_data: str, bot_token: str) -> int | None:
     except (KeyError, ValueError, TypeError, json.JSONDecodeError):
         return None
     return user_id
+
+
+def _download_jamendo_cc0(track_id: str) -> tuple[bytes, str, str]:
+    """Fetch a Jamendo file only when downloads are enabled and the license is CC0."""
+    client_id = os.environ.get("JAMENDO_CLIENT_ID", "").strip()
+    if not client_id or not re.fullmatch(r"\d{1,12}", track_id):
+        raise ValueError("Полный файл для этого трека недоступен")
+    params = urlencode({
+        "client_id": client_id, "format": "json", "id": track_id,
+        "include": "licenses", "audioformat": "mp32", "audiodlformat": "mp32",
+    })
+    request = Request(
+        f"https://api.jamendo.com/v3.0/tracks/?{params}",
+        headers={"User-Agent": "BamBook/0.1"},
+    )
+    with urlopen(request, timeout=12) as response:
+        catalog = json.loads(response.read().decode("utf-8"))
+    tracks = catalog.get("results", [])
+    if not tracks:
+        raise ValueError("Трек не найден в Jamendo")
+    track = tracks[0]
+    license_url = (track.get("license_ccurl") or "").lower()
+    audio_url = track.get("audiodownload", "")
+    parsed_audio = urlsplit(audio_url)
+    if (
+        not track.get("audiodownload_allowed")
+        or "creativecommons.org/publicdomain/zero/" not in license_url
+        or parsed_audio.scheme != "https"
+        or (parsed_audio.hostname or "").lower() != "prod-1.storage.jamendo.com"
+    ):
+        raise ValueError("У этого трека нет разрешённого скачивания с лицензией CC0")
+    audio_request = Request(audio_url, headers={"User-Agent": "BamBook/0.1"})
+    with urlopen(audio_request, timeout=45) as response:
+        final = urlsplit(response.geturl())
+        final_host = (final.hostname or "").lower()
+        content_type = response.headers.get_content_type()
+        if final.scheme != "https" or not (final_host == "jamendo.com" or final_host.endswith(".jamendo.com")):
+            raise ValueError("Jamendo вернул неожиданный адрес файла")
+        if not content_type.startswith("audio/") and content_type != "application/octet-stream":
+            raise ValueError("Jamendo не вернул аудиофайл")
+        audio_data = response.read(20 * 1024 * 1024 + 1)
+    if len(audio_data) > 20 * 1024 * 1024:
+        raise ValueError("Исходный аудиофайл превышает лимит 20 МБ")
+    return audio_data, str(track.get("name", "BamBook track"))[:200], str(track.get("artist_name", "Jamendo"))[:200]
+
+
+def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str) -> None:
+    audio_data, title, artist = _download_jamendo_cc0(track_id)
+    with tempfile.TemporaryDirectory(prefix="bambook-send-") as temp_dir:
+        input_path = os.path.join(temp_dir, "source.mp3")
+        output_path = os.path.join(temp_dir, "bambook-audio.m4a")
+        with open(input_path, "wb") as audio_file:
+            audio_file.write(audio_data)
+        subprocess.run(
+            [os.environ.get("FFMPEG_BINARY", "ffmpeg"), "-nostdin", "-v", "error", "-y", "-i", input_path,
+             "-vn", "-c:a", "aac", "-profile:a", "aac_low", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+             "-movflags", "+faststart", "-metadata", f"title={title}", output_path],
+            check=True, capture_output=True, timeout=180,
+        )
+        with open(output_path, "rb") as audio_file:
+            converted = audio_file.read(50 * 1024 * 1024 + 1)
+        if len(converted) > 50 * 1024 * 1024:
+            raise ValueError("После конвертации файл превышает лимит Telegram 50 МБ")
+        boundary = "BamBook" + secrets.token_hex(16)
+        parts = []
+        for name, value in (("chat_id", str(user_id)), ("title", title), ("performer", artist)):
+            parts.extend([
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                value.encode("utf-8"), b"\r\n",
+            ])
+        parts.extend([
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="audio"; filename="bambook-audio.m4a"\r\n',
+            b"Content-Type: audio/mp4\r\n\r\n", converted, b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ])
+        request = Request(
+            f"https://api.telegram.org/bot{bot_token}/sendAudio",
+            data=b"".join(parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        if not result.get("ok"):
+            raise ValueError(result.get("description", "Telegram не смог отправить аудио"))
 
 
 def make_handler(bot_token: str, database_path: str):
@@ -109,42 +198,12 @@ def make_handler(bot_token: str, database_path: str):
                     self._json(401, {"error": "Open BamBook from Telegram to continue"})
                     return
                 if body.get("action") == "play_jamendo":
-                    track_id = str(body.get("jamendoId", ""))
-                    client_id = os.environ.get("JAMENDO_CLIENT_ID", "").strip()
-                    if not client_id or not re.fullmatch(r"\d{1,12}", track_id):
-                        self._json(400, {"error": "Полный файл для этого трека недоступен"})
-                        return
-                    params = urlencode({
-                        "client_id": client_id, "format": "json", "id": track_id,
-                        "include": "licenses", "audioformat": "mp32", "audiodlformat": "mp32",
-                    })
-                    request = Request(f"https://api.jamendo.com/v3.0/tracks/?{params}", headers={"User-Agent": "BamBook/0.1"})
-                    with urlopen(request, timeout=12) as response:
-                        catalog = json.loads(response.read().decode("utf-8"))
-                    tracks = catalog.get("results", [])
-                    if not tracks:
-                        self._json(404, {"error": "Трек не найден в Jamendo"})
-                        return
-                    track = tracks[0]
-                    license_url = (track.get("license_ccurl") or "").lower()
-                    audio_url = track.get("audiodownload", "")
-                    parsed_audio = urlsplit(audio_url)
-                    if not track.get("audiodownload_allowed") or "creativecommons.org/publicdomain/zero/" not in license_url or parsed_audio.scheme != "https" or (parsed_audio.hostname or "").lower() != "prod-1.storage.jamendo.com":
-                        self._json(403, {"error": "У правообладателя нет разрешённого полного аудио"})
-                        return
-                    audio_request = Request(audio_url, headers={"User-Agent": "BamBook/0.1"})
-                    with urlopen(audio_request, timeout=45) as response:
-                        final = urlsplit(response.geturl())
-                        final_host = (final.hostname or "").lower()
-                        content_type = response.headers.get_content_type()
-                        if final.scheme != "https" or not (final_host == "jamendo.com" or final_host.endswith(".jamendo.com")) or (not content_type.startswith("audio/") and content_type != "application/octet-stream"):
-                            self._json(502, {"error": "Источник вернул неподдерживаемый аудиоформат"})
-                            return
-                        audio_data = response.read(20 * 1024 * 1024 + 1)
-                    if len(audio_data) > 20 * 1024 * 1024:
-                        self._json(413, {"error": "Аудиофайл слишком большой"})
-                        return
+                    audio_data, _title, _artist = _download_jamendo_cc0(str(body.get("jamendoId", "")))
                     self._respond(200, audio_data, "audio/mpeg")
+                    return
+                if body.get("action") == "send_jamendo_audio":
+                    _send_jamendo_audio(bot_token, user_id, str(body.get("jamendoId", "")))
+                    self._json(200, {"sent": True})
                     return
                 action = body.get("action")
                 library = Library(database_path)
