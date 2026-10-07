@@ -106,7 +106,20 @@ def _download_jamendo_cc0(track_id: str) -> tuple[bytes, str, str]:
     return audio_data, str(track.get("name", "BamBook track"))[:200], str(track.get("artist_name", "Jamendo"))[:200]
 
 
-def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str) -> None:
+def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str, database_path: str) -> None:
+    library = Library(database_path)
+    cached = library.get_cached_audio("jamendo", track_id)
+    if cached:
+        file_id, title, artist = cached
+        try:
+            telegram_api(bot_token, "sendAudio", {
+                "chat_id": user_id, "audio": file_id, "title": title, "performer": artist,
+            })
+            return
+        except Exception as error:
+            log.info("Cached Telegram audio is unavailable; refreshing (%s)", type(error).__name__)
+            library.remove_cached_audio("jamendo", track_id)
+
     audio_data, title, artist = _download_jamendo_cc0(track_id)
     with tempfile.TemporaryDirectory(prefix="bambook-send-") as temp_dir:
         input_path = os.path.join(temp_dir, "source.mp3")
@@ -146,6 +159,9 @@ def _send_jamendo_audio(bot_token: str, user_id: int, track_id: str) -> None:
             result = json.loads(response.read().decode("utf-8"))
         if not result.get("ok"):
             raise ValueError(result.get("description", "Telegram не смог отправить аудио"))
+        file_id = str(result.get("result", {}).get("audio", {}).get("file_id", ""))
+        if file_id:
+            library.cache_audio("jamendo", track_id, title, artist, file_id)
 
 
 def make_handler(bot_token: str, database_path: str):
@@ -202,7 +218,7 @@ def make_handler(bot_token: str, database_path: str):
                     self._respond(200, audio_data, "audio/mpeg")
                     return
                 if body.get("action") == "send_jamendo_audio":
-                    _send_jamendo_audio(bot_token, user_id, str(body.get("jamendoId", "")))
+                    _send_jamendo_audio(bot_token, user_id, str(body.get("jamendoId", "")), database_path)
                     self._json(200, {"sent": True})
                     return
                 action = body.get("action")
