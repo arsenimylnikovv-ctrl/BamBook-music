@@ -93,24 +93,36 @@
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>';
   }
 
+  function providerLinks(track) {
+    const spotifyId = /^[A-Za-z0-9]{22}$/.test(track?.spotify_id || "") ? track.spotify_id : "";
+    const youtubeId = /^[A-Za-z0-9_-]{6,20}$/.test(track?.youtube_id || "") ? track.youtube_id : "";
+    const query = encodeURIComponent(`${track?.artist || ""} ${track?.title || ""}`.trim());
+    const links = [
+      { label: spotifyId ? "Spotify" : "Искать в Spotify", url: spotifyId ? `https://open.spotify.com/track/${spotifyId}` : `https://open.spotify.com/search/${query}`, service: "spotify" },
+      { label: "YouTube", url: youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : `https://www.youtube.com/results?search_query=${query}`, service: "youtube" },
+      { label: "YouTube Music", url: youtubeId ? `https://music.youtube.com/watch?v=${youtubeId}` : `https://music.youtube.com/search?q=${query}`, service: "youtube-music" },
+    ];
+    return links.map(({ label, url, service }) => `<button class="provider-link provider-${service}" data-open-source="${escapeHTML(url)}" type="button">${label} ↗</button>`).join("");
+  }
+
   function card(track, index, { kind = "search", playlistId = null } = {}) {
     const art = safeLink(track.artwork);
     const hasFullAudio = /^\d{1,12}$/.test(String(track.jamendo_id || ""));
     const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
     const canPlay = hasFullAudio || hasYoutube;
-    const playLabel = hasYoutube ? "▶ Слушать" : hasFullAudio ? "▶ Полный трек" : "Нет аудио";
+    const playLabel = hasYoutube || hasFullAudio ? "▶ Слушать" : "В BamBook нет аудио";
     const sources = (Array.isArray(track.sources) ? track.sources : [track.source]).filter(Boolean).slice(0, 3);
     const play = `<button class="play-track-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
     let action = "";
     if (kind === "search") {
       const options = playlists.map((item) => `<option value="${Number(item.id)}">${escapeHTML(item.name)}</option>`).join("");
-      action = `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button><button class="queue-add" data-queue-index="${index}" type="button" aria-label="Добавить ${escapeHTML(track.title)} в очередь">+ Очередь</button><select class="playlist-add-select" data-add-index="${index}" aria-label="Добавить в плейлист" ${playlists.length ? "" : "disabled"}><option value="">+ В плейлист</option>${options}</select>`;
+      action = `<button class="save-button" data-save="${index}" type="button" aria-label="Сохранить ${escapeHTML(track.title)}">${bookmarkIcon()}</button><button class="queue-add" data-queue-index="${index}" type="button" aria-label="Добавить ${escapeHTML(track.title)} в очередь" ${canPlay ? "" : 'disabled title="В BamBook нет аудиопотока для этого результата"'}>+ Очередь</button><select class="playlist-add-select" data-add-index="${index}" aria-label="Добавить в плейлист" ${playlists.length ? "" : "disabled"}><option value="">+ В плейлист</option>${options}</select>`;
     } else if (kind === "playlist") {
       action = `<button class="playlist-track-remove" data-remove-playlist-track="${Number(track.id)}" type="button">Убрать</button>`;
     } else {
       action = `<button class="remove-button" data-remove="${Number(track.id)}" type="button" aria-label="Удалить ${escapeHTML(track.title)} из библиотеки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg></button>`;
     }
-    action += `<button class="send-chat-button" data-send-chat-kind="${kind}" data-send-chat-index="${index}" type="button" ${hasFullAudio ? "" : 'disabled title="Файл доступен только для разрешённых Jamendo CC0-треков"'}>⇧ В чат</button>`;
+    action += `<div class="provider-actions">${providerLinks(track)}</div><button class="send-chat-button" data-send-chat-kind="${kind}" data-send-chat-index="${index}" type="button" ${hasFullAudio ? "" : 'disabled title="Файл доступен только для разрешённых Jamendo CC0-треков"'}>Отправить в чат</button>`;
     return `<article class="track-card">
       <div class="cover" aria-hidden="true">♫${art ? `<img class="cover-art" src="${escapeHTML(art)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
       <div class="track-info"><strong class="track-title">${escapeHTML(track.title)}</strong>
@@ -412,11 +424,9 @@
     document.querySelector("#player-source-label").textContent = `СЕЙЧАС ИГРАЕТ · ${attribution}`;
     document.querySelector("#player-save").disabled = !track.url;
     document.querySelector("#player-footer-source").textContent = video
-      ? (track.spotify_id ? "Для фона передай трек в Spotify" : "YouTube в Mini App · фонового режима нет")
+      ? "Фон: открой YouTube или Spotify в приложении"
       : "Полный трек · Jamendo · системное управление";
-    const spotifyButton = document.querySelector("#spotify-handoff");
-    spotifyButton.classList.toggle("hidden", !track.spotify_id && !video);
-    spotifyButton.textContent = track.spotify_id ? "Открыть трек в Spotify ↗" : "Найти в Spotify ↗";
+    document.querySelector("#player-provider-links").innerHTML = providerLinks(track);
     const sendButton = document.querySelector("#send-to-chat");
     sendButton.disabled = !/^\d{1,12}$/.test(String(track.jamendo_id || ""));
     sendButton.title = sendButton.disabled ? "Файл доступен только для разрешённых Jamendo CC0-треков" : "Отправить полный аудиофайл в личный чат BamBook";
@@ -456,7 +466,7 @@
   async function sendTrackToChat(track, button) {
     const jamendoId = /^\d{1,12}$/.test(String(track?.jamendo_id || "")) ? String(track.jamendo_id) : "";
     if (!jamendoId) { showToast("Файл доступен только для разрешённых Jamendo CC0-треков"); return; }
-    const originalText = button?.textContent || "⇧ В чат";
+    const originalText = button?.textContent || "Отправить в чат";
     if (button) { button.disabled = true; button.textContent = "Отправляю…"; }
     try {
       await api("send_jamendo_audio", { jamendoId });
@@ -576,15 +586,6 @@
     audioPlayer.volume = level / 100;
     youtubePlayer?.setVolume?.(level);
   });
-  document.querySelector("#spotify-handoff").addEventListener("click", () => {
-    if (!currentPlayingTrack) return;
-    const spotifyId = /^[A-Za-z0-9]{22}$/.test(currentPlayingTrack.spotify_id || "") ? currentPlayingTrack.spotify_id : "";
-    const spotifyUrl = spotifyId
-      ? `https://open.spotify.com/track/${spotifyId}`
-      : `https://open.spotify.com/search/${encodeURIComponent(`${currentPlayingTrack.artist || ""} ${currentPlayingTrack.title || ""}`.trim())}`;
-    showToast("Открываю Spotify. Запусти трек там, чтобы слушать с выключенным экраном.");
-    openLink(spotifyUrl);
-  });
   document.querySelector("#send-to-chat").addEventListener("click", (event) => sendTrackToChat(currentPlayingTrack, event.currentTarget));
   document.querySelector("#player-save").addEventListener("click", async () => {
     if (!currentPlayingTrack) return;
@@ -616,6 +617,13 @@
   async function clickAction(event) {
     const link = event.target.closest("[data-open-link]");
     if (link) { event.preventDefault(); openLink(link.dataset.openLink); return; }
+    const provider = event.target.closest("[data-open-source]");
+    if (provider) {
+      event.preventDefault();
+      const url = safeLink(provider.dataset.openSource);
+      if (url) openLink(url);
+      return;
+    }
     const suggestion = event.target.closest("[data-query]");
     if (suggestion) {
       queryInput.value = suggestion.dataset.query;
