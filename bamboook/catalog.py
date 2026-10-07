@@ -108,23 +108,26 @@ def _spotify_search(query: str, limit: int) -> list[dict[str, str]]:
 
     try:
         token = _get_spotify_token()
-        if not token:
-            return []
-        params = urlencode({"q": query, "type": "track", "limit": min(limit, 10), "market": "US"})
+    except HTTPError as error:
+        logging.getLogger("bambook.catalog").warning(
+            "Spotify token request denied (HTTP %s): %s",
+            error.code,
+            _spotify_error_message(error),
+        )
+        raise
+    if not token:
+        return []
+    params = urlencode({"q": query, "type": "track", "limit": min(limit, 10), "market": "US"})
+    try:
         payload = _json_request(
             f"https://api.spotify.com/v1/search?{params}",
             {"Authorization": f"Bearer {token}"},
         )
     except HTTPError as error:
-        # Log only Spotify's short error message, never request headers or credentials.
-        try:
-            detail = json.loads(error.read(4096).decode("utf-8")).get("error", {}).get("message", "")
-        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-            detail = ""
         logging.getLogger("bambook.catalog").warning(
-            "Spotify API denied catalog request (HTTP %s): %s",
+            "Spotify Search endpoint denied request (HTTP %s): %s",
             error.code,
-            str(detail)[:240] or "no error message returned",
+            _spotify_error_message(error),
         )
         raise
     tracks = payload.get("tracks", {}).get("items", [])
@@ -142,6 +145,15 @@ def _spotify_search(query: str, limit: int) -> list[dict[str, str]]:
         for item in tracks
         if item.get("name") and item.get("external_urls", {}).get("spotify")
     ]
+
+
+def _spotify_error_message(error: HTTPError) -> str:
+    """Extract Spotify's short response message without logging credentials."""
+    try:
+        detail = json.loads(error.read(4096).decode("utf-8")).get("error", {}).get("message", "")
+    except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        detail = ""
+    return str(detail)[:240] or "no error message returned"
 
 
 def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
