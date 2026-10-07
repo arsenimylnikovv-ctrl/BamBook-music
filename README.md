@@ -75,6 +75,8 @@ Spotify подключается переменными `SPOTIFY_CLIENT_ID` и `
 
 Jamendo подключается переменной `JAMENDO_CLIENT_ID` в Railway → **Variables**. Создай приложение в [Jamendo Developer Portal](https://devportal.jamendo.com/), скопируй выданный Client ID и добавь его в Railway. После redeploy бот будет искать и отправлять только треки с лицензией CC0, для которых Jamendo явно разрешил скачивание. Без этой переменной поиск просто не включает Jamendo.
 
+В Mini App кнопка **«Отправить в чат BamBook»** активна у таких Jamendo CC0-треков. BamBook повторно проверяет право на скачивание, перекодирует файл в AAC-LC `.m4a` и отправляет его через Telegram Bot API в личный чат с ботом. Для этого в Railway должна быть задана `JAMENDO_CLIENT_ID`; FFmpeg уже устанавливается Dockerfile. У треков Spotify и YouTube кнопка отправки отключена: их API не предоставляют BamBook скачиваемый аудиофайл, а Spotify запрещает скачивать свой аудиоконтент.
+
 Для BamBook Plus добавь `PREMIUM_PRICE_STARS` со значением `100` в Railway → **Variables**, затем сделай Redeploy. Оплата цифровой подписки проводится Telegram Stars; в боте доступны `/premium`, `/terms` и `/paysupport`. `/paysupport` объясняет пользователю, как самостоятельно отменить продление и обновить статус подписки.
 
 ### Стоимость
