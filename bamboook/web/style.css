@@ -357,6 +357,11 @@ body:has(.mini-player.video-player.active) .shell { padding-bottom: calc(350px +
 .player-main-controls button[aria-pressed="true"] { color: #c8dc9a; }
 .spotify-handoff { align-self: center; padding: 10px 16px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; color: #f6f0e4; background: rgba(255,255,255,.12); font: inherit; font-size: 12px; cursor: pointer; }
 .spotify-handoff:hover { background: rgba(255,255,255,.2); }
+.player-share-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.send-chat-button { padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); background: var(--surface-high); font: inherit; font-size: 9px; font-weight: 700; cursor: pointer; }
+.player-share-actions .send-chat-button { padding: 10px 16px; color: #f6f0e4; border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.12); font-size: 12px; }
+.send-chat-button:disabled { opacity: .42; cursor: not-allowed; }
+.send-chat-button:not(:disabled):hover { border-color: var(--accent); }
 .player-footer { display: flex; justify-content: space-between; gap: 8px; color: rgba(255,255,255,.58); font-size: 9px; }
 .source-badge { padding: 2px 5px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font-size: 7px; }
 .player-main-controls button:disabled, .now-playing-copy > button:disabled { opacity: .4; cursor: default; }
