@@ -219,10 +219,10 @@ def make_handler(bot_token: str, database_path: str):
                         # delivery path; the Mini App only needs catalog metadata.
                         track.pop("download_url", None)
                         track.pop("audio_url", None)
-                    # Keep the Mini App focused on results that can actually
-                    # play in its unified dock; metadata-only matches become noise.
+                    # Spotify-only matches are useful even though playback is
+                    # handed off to the Spotify app instead of the Mini App.
                     tracks = [track for track in tracks if (
-                        track.get("jamendo_id") or track.get("youtube_id")
+                        track.get("jamendo_id") or track.get("youtube_id") or track.get("spotify_id")
                     )]
                     self._json(200, {"tracks": tracks})
                 elif action == "library":
