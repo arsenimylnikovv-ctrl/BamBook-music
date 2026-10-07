@@ -63,13 +63,18 @@ class Telegram:
             raise ValueError("Размер исходного файла превышает лимит Telegram Bot API (20 МБ).")
         return data
 
-    def send_audio(self, chat_id: int, path: str, title: str, performer: str = "BamBook") -> str:
+    def send_audio(self, chat_id: int, path: str, title: str, performer: str = "BamBook", track_id: str = "") -> str:
         boundary = "BamBookBoundary7MA4YWxkTrZu0gW"
         if os.path.getsize(path) > 50 * 1024 * 1024:
             raise ValueError("После конвертации файл больше лимита Telegram Bot API (50 МБ).")
         with open(path, "rb") as audio_file:
             audio_data = audio_file.read()
         fields = {"chat_id": str(chat_id), "title": title[:200], "performer": performer[:200]}
+        if re.fullmatch(r"\d{1,12}", track_id):
+            fields["reply_markup"] = json.dumps({"inline_keyboard": [[{
+                "text": "＋ В плейлист",
+                "callback_data": f"playlist:add:{track_id}",
+            }]]}, ensure_ascii=False)
         parts = []
         for name, value in fields.items():
             parts.extend([
@@ -97,14 +102,20 @@ class Telegram:
             raise RuntimeError(result.get("description", "Telegram audio upload failed"))
         return str(result.get("result", {}).get("audio", {}).get("file_id", ""))
 
-    def send_audio_file_id(self, chat_id: int, file_id: str, title: str, performer: str = "BamBook") -> None:
+    def send_audio_file_id(self, chat_id: int, file_id: str, title: str, performer: str = "BamBook", track_id: str = "") -> None:
         """Ask Telegram to resend an audio file already stored by this bot."""
-        self.call("sendAudio", {
+        params = {
             "chat_id": chat_id,
             "audio": file_id,
             "title": title[:200],
             "performer": performer[:200],
-        })
+        }
+        if re.fullmatch(r"\d{1,12}", track_id):
+            params["reply_markup"] = json.dumps({"inline_keyboard": [[{
+                "text": "＋ В плейлист",
+                "callback_data": f"playlist:add:{track_id}",
+            }]]}, ensure_ascii=False)
+        self.call("sendAudio", params)
 
 
 def transcode_to_m4a(audio_data: bytes, title: str) -> tuple[tempfile.TemporaryDirectory, str]:
@@ -193,10 +204,10 @@ def download_jamendo_track(url: str) -> bytes:
     return data
 
 
-def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook") -> str:
+def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook", track_id: str = "") -> str:
     temp_dir, output_path = transcode_to_m4a(audio_data, title)
     try:
-        return telegram.send_audio(chat_id, output_path, title, performer)
+        return telegram.send_audio(chat_id, output_path, title, performer, track_id)
     finally:
         temp_dir.cleanup()
 
@@ -208,16 +219,113 @@ def send_catalog_audio(telegram: Telegram, library: Library, chat_id: int, track
     if cached:
         file_id, title, performer = cached
         try:
-            telegram.send_audio_file_id(chat_id, file_id, title, performer)
+            telegram.send_audio_file_id(chat_id, file_id, title, performer, track_id)
             return
         except Exception as error:
             log.info("Cached Telegram audio is unavailable; refreshing (%s)", type(error).__name__)
             library.remove_cached_audio("jamendo", track_id)
 
     audio_data = download_jamendo_track(track["download_url"])
-    file_id = convert_and_send(telegram, chat_id, audio_data, track["title"], track["artist"])
+    file_id = convert_and_send(telegram, chat_id, audio_data, track["title"], track["artist"], track_id)
     if file_id and track_id:
         library.cache_audio("jamendo", track_id, track["title"], track["artist"], file_id)
+
+
+def audio_queue_worker(telegram: Telegram, library: Library) -> None:
+    """Process durable audio jobs away from Telegram's update polling loop."""
+    while True:
+        job = library.claim_audio_job()
+        if not job:
+            time.sleep(0.8)
+            continue
+        job_id, chat_id, payload, attempts = job
+        try:
+            track = json.loads(payload)
+            send_catalog_audio(telegram, library, chat_id, track)
+            library.finish_audio_job(job_id)
+        except Exception as error:
+            retry = library.retry_audio_job(job_id, attempts, type(error).__name__)
+            log.warning("Audio queue job %s failed (%s); retry=%s", job_id, type(error).__name__, retry)
+            if not retry:
+                try:
+                    telegram.send(chat_id, "Не удалось подготовить аудиофайл после нескольких попыток. Попробуй позже или выбери другой трек.")
+                except Exception as send_error:
+                    log.warning("Could not report failed audio job %s (%s)", job_id, type(send_error).__name__)
+
+
+def handle_playlist_callback(telegram: Telegram, library: Library, callback: dict) -> None:
+    """Offer the user their own playlists below a cached catalog audio message."""
+    callback_id = str(callback.get("id", ""))
+    user_id = int(callback.get("from", {}).get("id", 0))
+    chat_id = callback.get("message", {}).get("chat", {}).get("id", user_id)
+    parts = str(callback.get("data", "")).split(":")
+    if len(parts) < 3 or parts[0] != "playlist" or not parts[-1].isdigit():
+        telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Кнопка устарела."})
+        return
+    if parts[1] == "page":
+        if len(parts) != 4 or not parts[2].isdigit():
+            telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Кнопка устарела."})
+            return
+        track_id = parts[2]
+    else:
+        track_id = parts[-1]
+    cached = library.get_cached_audio("jamendo", track_id)
+    if not cached:
+        telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Трек больше недоступен."})
+        return
+
+    if parts[1] in ("add", "page"):
+        playlists = library.list_playlists(user_id)
+        if not playlists:
+            telegram.call("answerCallbackQuery", {
+                "callback_query_id": callback_id,
+                "text": "Сначала создай плейлист командой /playlist_new Название",
+                "show_alert": True,
+            })
+            return
+        page = int(parts[3]) if parts[1] == "page" and len(parts) == 4 and parts[3].isdigit() else 0
+        page_size = 20
+        page = max(0, min(page, max(0, (len(playlists) - 1) // page_size)))
+        visible = playlists[page * page_size:(page + 1) * page_size]
+        keyboard = [[{
+            "text": name[:45],
+            "callback_data": f"playlist:save:{playlist_id}:{track_id}",
+        }] for playlist_id, name, _count in visible]
+        navigation = []
+        if page > 0:
+            navigation.append({"text": "← Назад", "callback_data": f"playlist:page:{track_id}:{page - 1}"})
+        if (page + 1) * page_size < len(playlists):
+            navigation.append({"text": "Дальше →", "callback_data": f"playlist:page:{track_id}:{page + 1}"})
+        if navigation:
+            keyboard.append(navigation)
+        telegram.call("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"В какой плейлист добавить «{cached[1]}»? ({page + 1}/{max(1, (len(playlists) + page_size - 1) // page_size)})",
+            "reply_markup": json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False),
+        })
+        telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Выбери плейлист"})
+        return
+
+    if parts[1] == "save" and len(parts) == 4 and parts[2].isdigit():
+        playlist_id = int(parts[2])
+        file_id, title, performer = cached
+        track = {
+            "title": title,
+            "artist": performer,
+            "album": "",
+            "url": f"https://www.jamendo.com/track/{track_id}",
+            "source": "Jamendo",
+            "jamendo_id": track_id,
+        }
+        try:
+            _saved, added = library.add_to_playlist(user_id, playlist_id, track)
+            text = "Добавил в плейлист 🎵" if added else "Этот трек уже есть в плейлисте."
+        except ValueError:
+            text = "Плейлист не найден или принадлежит другому пользователю."
+        telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
+        return
+
+    telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Кнопка устарела."})
 
 
 def format_track(track: tuple, index: int) -> str:
@@ -270,6 +378,14 @@ def main() -> None:
     bot_username = str(bot_info.get("username", ""))
     database_path = os.environ.get("DATABASE_PATH", "data/bambook.sqlite3")
     library = Library(database_path)
+    library.prune_audio_jobs()
+    library.recover_interrupted_audio_jobs()
+    threading.Thread(
+        target=audio_queue_worker,
+        args=(telegram, library),
+        name="bambook-audio-worker",
+        daemon=True,
+    ).start()
     web_port = int(os.environ.get("PORT", os.environ.get("WEBAPP_PORT", "8080")))
     web_server = start_webapp(
         token,
@@ -303,9 +419,13 @@ def main() -> None:
 
     while True:
         try:
-            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message","pre_checkout_query","channel_post","guest_message"]'})
+            updates = telegram.call("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": '["message","callback_query","pre_checkout_query","channel_post","guest_message"]'})
             for update in updates:
                 offset = update["update_id"] + 1
+                callback = update.get("callback_query")
+                if callback:
+                    handle_playlist_callback(telegram, library, callback)
+                    continue
                 guest_message = update.get("guest_message")
                 if guest_message:
                     answer_guest_search(telegram, guest_message, bot_username)
@@ -426,17 +546,10 @@ def main() -> None:
                                 if track.get("download_url")
                             ][:3]
                             pending[user] = [track for _index, track in audio_results]
-                            sent = 0
                             if audio_results:
-                                for index, track in audio_results:
-                                    try:
-                                        send_catalog_audio(telegram, library, chat, track)
-                                        sent += 1
-                                    except Exception as error:
-                                        log.warning("Could not send catalog audio (%s)", type(error).__name__)
-                                if not sent:
-                                    pending[user] = []
-                                    telegram.send(chat, "Не удалось получить доступное аудио по этому запросу. Попробуй другой вариант или отправь свой аудиофайл.")
+                                for _index, track in audio_results:
+                                    library.enqueue_audio_job(chat, json.dumps(track, ensure_ascii=False))
+                                telegram.send(chat, f"Нашёл {len(audio_results)} аудио{'файл' if len(audio_results) == 1 else 'файла'}. Поставил в очередь — пришлю сюда, когда подготовлю.")
                             else:
                                 telegram.send(chat, "По этому запросу пока нет аудио, которое можно отправить файлом. Попробуй уточнить запрос или пришли свой аудиофайл.")
                     elif command == "/save":
