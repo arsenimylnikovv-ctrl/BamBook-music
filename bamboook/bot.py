@@ -63,7 +63,7 @@ class Telegram:
             raise ValueError("Размер исходного файла превышает лимит Telegram Bot API (20 МБ).")
         return data
 
-    def send_audio(self, chat_id: int, path: str, title: str, performer: str = "BamBook") -> None:
+    def send_audio(self, chat_id: int, path: str, title: str, performer: str = "BamBook") -> str:
         boundary = "BamBookBoundary7MA4YWxkTrZu0gW"
         if os.path.getsize(path) > 50 * 1024 * 1024:
             raise ValueError("После конвертации файл больше лимита Telegram Bot API (50 МБ).")
@@ -95,6 +95,16 @@ class Telegram:
             result = json.loads(response.read().decode("utf-8"))
         if not result.get("ok"):
             raise RuntimeError(result.get("description", "Telegram audio upload failed"))
+        return str(result.get("result", {}).get("audio", {}).get("file_id", ""))
+
+    def send_audio_file_id(self, chat_id: int, file_id: str, title: str, performer: str = "BamBook") -> None:
+        """Ask Telegram to resend an audio file already stored by this bot."""
+        self.call("sendAudio", {
+            "chat_id": chat_id,
+            "audio": file_id,
+            "title": title[:200],
+            "performer": performer[:200],
+        })
 
 
 def transcode_to_m4a(audio_data: bytes, title: str) -> tuple[tempfile.TemporaryDirectory, str]:
@@ -183,12 +193,31 @@ def download_jamendo_track(url: str) -> bytes:
     return data
 
 
-def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook") -> None:
+def convert_and_send(telegram: Telegram, chat_id: int, audio_data: bytes, title: str, performer: str = "BamBook") -> str:
     temp_dir, output_path = transcode_to_m4a(audio_data, title)
     try:
-        telegram.send_audio(chat_id, output_path, title, performer)
+        return telegram.send_audio(chat_id, output_path, title, performer)
     finally:
         temp_dir.cleanup()
+
+
+def send_catalog_audio(telegram: Telegram, library: Library, chat_id: int, track: dict[str, str]) -> None:
+    """Send a downloadable Jamendo CC0 track, reusing Telegram's file_id on cache hits."""
+    track_id = str(track.get("jamendo_id", ""))
+    cached = library.get_cached_audio("jamendo", track_id) if track_id else None
+    if cached:
+        file_id, title, performer = cached
+        try:
+            telegram.send_audio_file_id(chat_id, file_id, title, performer)
+            return
+        except Exception as error:
+            log.info("Cached Telegram audio is unavailable; refreshing (%s)", type(error).__name__)
+            library.remove_cached_audio("jamendo", track_id)
+
+    audio_data = download_jamendo_track(track["download_url"])
+    file_id = convert_and_send(telegram, chat_id, audio_data, track["title"], track["artist"])
+    if file_id and track_id:
+        library.cache_audio("jamendo", track_id, track["title"], track["artist"], file_id)
 
 
 def format_track(track: tuple, index: int) -> str:
@@ -401,8 +430,7 @@ def main() -> None:
                             if audio_results:
                                 for index, track in audio_results:
                                     try:
-                                        audio_data = download_jamendo_track(track["download_url"])
-                                        convert_and_send(telegram, chat, audio_data, track["title"], track["artist"])
+                                        send_catalog_audio(telegram, library, chat, track)
                                         sent += 1
                                     except Exception as error:
                                         log.warning("Could not send catalog audio (%s)", type(error).__name__)
