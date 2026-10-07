@@ -218,7 +218,7 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     providers = (_spotify_search, _youtube_search, _youtube_music_search, _jamendo_search)
     results: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
-        futures = [executor.submit(provider, query, limit) for provider in providers]
+        futures = {executor.submit(provider, query, limit): provider for provider in providers}
         for future in as_completed(futures):
             try:
                 results.extend(future.result())
@@ -227,7 +227,8 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
                 import logging
 
                 logging.getLogger("bambook.catalog").warning(
-                    "Music catalog search failed (%s)", type(error).__name__
+                    "Music catalog %s failed (%s, HTTP %s)",
+                    futures[future].__name__, type(error).__name__, getattr(error, "code", "n/a"),
                 )
 
     unique: dict[str, dict] = {}
