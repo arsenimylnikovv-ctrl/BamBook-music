@@ -82,6 +82,11 @@ def _get_spotify_token() -> str | None:
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
+        import logging
+
+        logging.getLogger("bambook.catalog").warning(
+            "Spotify search skipped: SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET is not configured"
+        )
         return None
     if _spotify_token and time.time() < _spotify_token_expires:
         return _spotify_token
