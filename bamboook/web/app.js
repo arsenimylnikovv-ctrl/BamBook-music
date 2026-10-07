@@ -110,6 +110,7 @@
     } else {
       action = `<button class="remove-button" data-remove="${Number(track.id)}" type="button" aria-label="Удалить ${escapeHTML(track.title)} из библиотеки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg></button>`;
     }
+    action += `<button class="send-chat-button" data-send-chat-kind="${kind}" data-send-chat-index="${index}" type="button" ${hasFullAudio ? "" : 'disabled title="Файл доступен только для разрешённых Jamendo CC0-треков"'}>⇧ В чат</button>`;
     return `<article class="track-card">
       <div class="cover" aria-hidden="true">♫${art ? `<img class="cover-art" src="${escapeHTML(art)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
       <div class="track-info"><strong class="track-title">${escapeHTML(track.title)}</strong>
@@ -416,6 +417,9 @@
     const spotifyButton = document.querySelector("#spotify-handoff");
     spotifyButton.classList.toggle("hidden", !track.spotify_id && !video);
     spotifyButton.textContent = track.spotify_id ? "Открыть трек в Spotify ↗" : "Найти в Spotify ↗";
+    const sendButton = document.querySelector("#send-to-chat");
+    sendButton.disabled = !/^\d{1,12}$/.test(String(track.jamendo_id || ""));
+    sendButton.title = sendButton.disabled ? "Файл доступен только для разрешённых Jamendo CC0-треков" : "Отправить полный аудиофайл в личный чат BamBook";
     showPlayerArtwork(track, video);
     miniPlayer.classList.add("active");
     openPlayer();
@@ -447,6 +451,21 @@
       audioPlayer.src = currentAudioObjectUrl;
       await audioPlayer.play();
     } catch (error) { showToast(error.message || "Не удалось загрузить полный трек"); }
+  }
+
+  async function sendTrackToChat(track, button) {
+    const jamendoId = /^\d{1,12}$/.test(String(track?.jamendo_id || "")) ? String(track.jamendo_id) : "";
+    if (!jamendoId) { showToast("Файл доступен только для разрешённых Jamendo CC0-треков"); return; }
+    const originalText = button?.textContent || "⇧ В чат";
+    if (button) { button.disabled = true; button.textContent = "Отправляю…"; }
+    try {
+      await api("send_jamendo_audio", { jamendoId });
+      showToast("Аудиофайл отправлен в личный чат BamBook");
+    } catch (error) {
+      showToast(error.message || "Не удалось отправить аудио в чат");
+    } finally {
+      if (button) { button.disabled = false; button.textContent = originalText; }
+    }
   }
 
   const queueStorageKey = `bambook-queue-${user?.id || "guest"}`;
@@ -566,6 +585,7 @@
     showToast("Открываю Spotify. Запусти трек там, чтобы слушать с выключенным экраном.");
     openLink(spotifyUrl);
   });
+  document.querySelector("#send-to-chat").addEventListener("click", (event) => sendTrackToChat(currentPlayingTrack, event.currentTarget));
   document.querySelector("#player-save").addEventListener("click", async () => {
     if (!currentPlayingTrack) return;
     try {
@@ -607,6 +627,13 @@
       const groups = { search: currentTracks, library: libraryTracks, playlist: currentPlaylistTracks };
       const track = groups[playButton.dataset.playKind]?.[Number(playButton.dataset.playIndex)];
       playQueue = [track].filter(Boolean); queueIndex = 0; persistQueue(); playQueueAt(0);
+      return;
+    }
+    const sendButton = event.target.closest("[data-send-chat-kind]");
+    if (sendButton) {
+      const groups = { search: currentTracks, library: libraryTracks, playlist: currentPlaylistTracks };
+      const track = groups[sendButton.dataset.sendChatKind]?.[Number(sendButton.dataset.sendChatIndex)];
+      await sendTrackToChat(track, sendButton);
       return;
     }
     const queuePlay = event.target.closest("[data-queue-play]");
