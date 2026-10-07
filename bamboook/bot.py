@@ -161,26 +161,6 @@ def download_direct_audio(url: str) -> tuple[bytes, str]:
     return data, os.path.splitext(os.path.basename(parsed.path))[0] or "BamBook audio"
 
 
-def download_apple_preview(url: str) -> bytes:
-    """Fetch only Apple's catalog preview clips, not full streaming tracks."""
-    allowed_suffixes = (".itunes.apple.com", ".mzstatic.com")
-    parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.lower().endswith(allowed_suffixes):
-        raise ValueError("Apple returned an unexpected preview host")
-    request = Request(url, headers={"User-Agent": "BamBook/0.1"})
-    with urlopen(request, timeout=30) as response:
-        final_host = (urlsplit(response.geturl()).hostname or "").lower()
-        if not final_host.endswith(allowed_suffixes):
-            raise ValueError("Apple preview redirected to an unexpected host")
-        content_type = response.headers.get_content_type()
-        if not content_type.startswith("audio/") and content_type != "application/octet-stream":
-            raise ValueError("Apple preview URL did not return audio")
-        data = response.read(20 * 1024 * 1024 + 1)
-    if len(data) > 20 * 1024 * 1024:
-        raise ValueError("Apple preview is larger than Telegram's 20 MB download limit")
-    return data
-
-
 def download_jamendo_track(url: str) -> bytes:
     """Fetch a Jamendo track only from Jamendo's own download CDN."""
     parsed = urlsplit(url)
@@ -367,7 +347,7 @@ def main() -> None:
                     query = ""
                     audio_url = ""
                     if command in ("/start", "/help"):
-                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь запрос или просто напиши название. Доступные аудиопревью пришлю прямо сюда.\n/premium — BamBook Plus\n/paysupport — помощь с оплатой\n/audio прямая_ссылка — конвертировать разрешённый файл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат поиска\n/library — моя коллекция\n/remove номер — удалить трек\n/playlists — мои плейлисты\n/playlist_new название — создать плейлист\n/playlist_add номер_плейлиста номер_трека — добавить трек из библиотеки\n/playlist_show номер — показать треки\n/playlist_remove номер_плейлиста номер_трека — убрать трек\n/playlist_delete номер — удалить плейлист")
+                        telegram.send(chat, "Привет! Я BamBook — твоя музыкальная библиотека.\n\nНажми /search и отправь запрос или просто напиши название. Если доступен аудиофайл, пришлю его прямо сюда.\n/premium — BamBook Plus\n/paysupport — помощь с оплатой\n/audio прямая_ссылка — конвертировать разрешённый файл в M4A\nОтправь аудиофайл — получить AAC-LC M4A\n/save номер — сохранить результат поиска\n/library — моя коллекция\n/remove номер — удалить трек\n/playlists — мои плейлисты\n/playlist_new название — создать плейлист\n/playlist_add номер_плейлиста номер_трека — добавить трек из библиотеки\n/playlist_show номер — показать треки\n/playlist_remove номер_плейлиста номер_трека — убрать трек\n/playlist_delete номер — удалить плейлист")
                     elif command == "/premium":
                         price = max(1, min(10000, int(os.environ.get("PREMIUM_PRICE_STARS", "100"))))
                         telegram.call("sendInvoice", {
@@ -414,18 +394,14 @@ def main() -> None:
                         else:
                             audio_results = [
                                 (index, track) for index, track in enumerate(results, 1)
-                                if track.get("download_url") or track.get("preview_url")
+                                if track.get("download_url")
                             ][:3]
                             pending[user] = [track for _index, track in audio_results]
                             sent = 0
                             if audio_results:
                                 for index, track in audio_results:
                                     try:
-                                        audio_data = (
-                                            download_jamendo_track(track["download_url"])
-                                            if track.get("download_url")
-                                            else download_apple_preview(track["preview_url"])
-                                        )
+                                        audio_data = download_jamendo_track(track["download_url"])
                                         convert_and_send(telegram, chat, audio_data, track["title"], track["artist"])
                                         sent += 1
                                     except Exception as error:
@@ -476,7 +452,7 @@ def main() -> None:
                             telegram.send(chat, "Не нашёл такой номер. Проверь /playlists и /library.")
                             continue
                         row = tracks[track_index - 1]
-                        track = {"title": row[1], "artist": row[2], "album": row[3], "url": row[4], "source": row[5], "artwork": row[6], "duration": row[7], "preview_url": row[8], "youtube_id": row[9], "spotify_id": row[10]}
+                        track = {"title": row[1], "artist": row[2], "album": row[3], "url": row[4], "source": row[5], "artwork": row[6], "duration": row[7], "youtube_id": row[9], "spotify_id": row[10]}
                         _saved, added = library.add_to_playlist(user, playlists[playlist_index - 1][0], track)
                         telegram.send(chat, "Добавил трек в плейлист 🎵" if added else "Этот трек уже есть в плейлисте.")
                     elif command == "/playlist_show":

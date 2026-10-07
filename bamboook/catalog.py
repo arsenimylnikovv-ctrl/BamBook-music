@@ -30,28 +30,6 @@ def _json_request(url: str, headers: dict[str, str] | None = None, data: bytes |
         return json.loads(response.read().decode("utf-8"))
 
 
-def _itunes_search(query: str, limit: int) -> list[dict[str, str]]:
-    params = urlencode({"term": query, "entity": "song", "limit": limit, "country": "US"})
-    payload = _json_request(
-        f"https://itunes.apple.com/search?{params}",
-        {"User-Agent": "BamBook/0.1"},
-    )
-    return [
-        {
-            "title": item.get("trackName", "Unknown track"),
-            "artist": item.get("artistName", "Unknown artist"),
-            "album": item.get("collectionName", ""),
-            "url": item.get("trackViewUrl", ""),
-            "source": "Apple Music",
-            "artwork": item.get("artworkUrl100", "").replace("100x100bb", "300x300bb"),
-            "duration": _duration(item.get("trackTimeMillis")),
-            "preview_url": item.get("previewUrl", ""),
-        }
-        for item in payload.get("results", [])
-        if item.get("trackName") and item.get("trackViewUrl")
-    ]
-
-
 def _jamendo_search(query: str, limit: int) -> list[dict[str, str]]:
     """Find tracks Jamendo explicitly allows apps to download.
 
@@ -166,7 +144,7 @@ def _youtube_search(query: str, limit: int) -> list[dict[str, str]]:
             "title": item.get("title", "Unknown track"),
             "artist": item.get("artist") or item.get("uploader") or item.get("channel") or "YouTube creator",
             "album": "",
-            "url": item.get("webpage_url") or f"https://music.youtube.com/watch?v={item['id']}",
+            "url": item.get("webpage_url") or f"https://www.youtube.com/watch?v={item['id']}",
             "source": "YouTube",
             "youtube_id": item["id"],
             "artwork": item.get("thumbnail", ""),
@@ -210,43 +188,6 @@ def _youtube_music_search(query: str, limit: int) -> list[dict[str, str]]:
     return tracks
 
 
-def _soundcloud_search(query: str, limit: int) -> list[dict[str, str]]:
-    """Search SoundCloud metadata; playback uses SoundCloud's official widget."""
-    import yt_dlp
-
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extract_flat": "in_playlist",
-        "playlistend": limit,
-        "noplaylist": True,
-        "socket_timeout": 10,
-    }
-    with yt_dlp.YoutubeDL(options) as ydl:
-        payload = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
-    tracks = []
-    for item in (payload or {}).get("entries", []):
-        if not item or not item.get("title"):
-            continue
-        url = item.get("webpage_url") or item.get("url") or ""
-        parsed = urlsplit(url)
-        host = (parsed.hostname or "").lower()
-        if parsed.scheme != "https" or not (host == "soundcloud.com" or host.endswith(".soundcloud.com")):
-            continue
-        tracks.append({
-            "title": item.get("title", "Unknown track"),
-            "artist": item.get("artist") or item.get("uploader") or item.get("creator") or "SoundCloud creator",
-            "album": "",
-            "url": url,
-            "source": "SoundCloud",
-            "soundcloud_url": url,
-            "artwork": item.get("thumbnail", ""),
-            "duration": _duration((item.get("duration") or 0) * 1000),
-        })
-    return tracks
-
-
 def _normalize(value: str) -> str:
     value = re.sub(r"\([^)]*(official|lyrics|audio|video|remaster)[^)]*\)", " ", value, flags=re.I)
     return " ".join(re.findall(r"[\w]+", value.casefold()))
@@ -262,13 +203,19 @@ def _relevance(query: str, track: dict[str, str]) -> float:
     return overlap * 0.75 + phrase_match * 0.25
 
 
+def _same_recording(left: dict[str, str], right: dict[str, str]) -> bool:
+    title_score = SequenceMatcher(None, _normalize(left["title"]), _normalize(right["title"])).ratio()
+    artist_score = SequenceMatcher(None, _normalize(left["artist"]), _normalize(right["artist"])).ratio()
+    return title_score >= 0.93 and artist_score >= 0.55 or title_score >= 0.82 and artist_score >= 0.78
+
+
 def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     """Search every configured catalog concurrently and return ranked results."""
     query = query.strip()
     if not query:
         return []
 
-    providers = (_itunes_search, _spotify_search, _youtube_search, _youtube_music_search, _soundcloud_search, _jamendo_search)
+    providers = (_spotify_search, _youtube_search, _youtube_music_search, _jamendo_search)
     results: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = [executor.submit(provider, query, limit) for provider in providers]
@@ -287,18 +234,23 @@ def search_tracks(query: str, limit: int = 5) -> list[dict[str, str]]:
     for track in results:
         key = f"{_normalize(track['artist'])}|{_normalize(track['title'])}"
         link = {"source": track["source"], "url": track["url"]}
-        if key not in unique:
-            unique[key] = {**track, "links": [link]}
+        matching_key = next((existing_key for existing_key, existing in unique.items() if _same_recording(track, existing)), key)
+        if matching_key not in unique:
+            unique[matching_key] = {**track, "sources": [track["source"]], "links": [link]}
         else:
-            combined = unique[key]
+            combined = unique[matching_key]
+            if track["source"] not in combined["sources"]:
+                combined["sources"].append(track["source"])
             if not any(existing["url"] == link["url"] for existing in combined["links"]):
                 combined["links"].append(link)
             if _relevance(query, track) > _relevance(query, combined):
                 links = combined["links"]
+                sources = combined["sources"]
                 combined.update(track)
                 combined["links"] = links
+                combined["sources"] = sources
             else:
-                for field in ("preview_url", "youtube_id", "spotify_id", "soundcloud_url", "download_url", "jamendo_id", "license"):
+                for field in ("youtube_id", "spotify_id", "download_url", "jamendo_id", "license"):
                     if not combined.get(field) and track.get(field):
                         combined[field] = track[field]
     ranked = sorted(unique.values(), key=lambda track: _relevance(query, track), reverse=True)

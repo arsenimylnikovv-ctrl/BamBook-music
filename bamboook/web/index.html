@@ -9,6 +9,8 @@
     <link rel="preconnect" href="https://telegram.org" />
     <link rel="stylesheet" href="/style.css" />
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+    <script>window.onYouTubeIframeAPIReady = () => window.dispatchEvent(new Event("bambook:youtube-ready"));</script>
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script defer src="/app.js"></script>
   </head>
   <body>
@@ -36,7 +38,7 @@
           <input id="query" name="query" autocomplete="off" enterkeyhint="search" placeholder="Исполнитель или трек" maxlength="160" aria-label="Исполнитель или название трека" />
           <button class="search-button" id="search-button" type="submit"><span>Найти</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
         </form>
-        <div class="catalog-note"><span class="catalog-spark">✳</span> Apple Music <i></i> Spotify <i></i> YouTube <i></i> SoundCloud</div>
+        <div class="catalog-note"><span class="catalog-spark">✳</span> Spotify <i></i> YouTube <i></i> YouTube Music</div>
       </section>
 
       <section class="view" id="search-view">
@@ -138,11 +140,24 @@
       </section>
 
       <div class="mini-player" id="mini-player" aria-label="Плеер">
-        <div class="mini-player-copy"><strong id="player-title">Выбери трек</strong><span id="player-artist">Полная версия или короткое превью</span></div>
-        <div class="player-controls"><button type="button" id="player-prev" aria-label="Предыдущий трек">‹</button><button type="button" id="player-next" aria-label="Следующий трек">›</button><button type="button" id="player-queue" aria-label="Открыть очередь">Очередь <span id="player-queue-count">0</span></button></div>
-        <audio id="audio-player" controls preload="none"></audio>
-        <iframe id="service-player" class="service-player hidden" title="Плеер музыкального сервиса" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        <button class="mini-player-open" id="player-open" type="button" aria-label="Открыть плеер"><img id="mini-artwork" alt="" /><span class="mini-player-copy"><strong id="player-title">Выбери трек</strong><span id="player-artist">Открой плеер, чтобы начать</span></span></button>
+        <div class="player-controls"><button type="button" id="player-prev" aria-label="Предыдущий трек">◀</button><button type="button" id="player-toggle-mini" aria-label="Воспроизвести или приостановить">▶</button><button type="button" id="player-next" aria-label="Следующий трек">▶</button><button type="button" id="player-queue" aria-label="Открыть очередь">☷ <span id="player-queue-count">0</span></button></div>
+        <audio id="audio-player" preload="none"></audio>
       </div>
+      <section class="player-overlay hidden" id="player-overlay" role="dialog" aria-modal="true" aria-label="Сейчас играет">
+        <img class="player-backdrop" id="player-backdrop" alt="" />
+        <div class="player-scrim"></div>
+        <div class="player-sheet">
+          <div class="player-topline"><button id="player-close" type="button" aria-label="Закрыть плеер">⌄</button><span>СЕЙЧАС ИГРАЕТ</span><button id="player-open-queue" type="button" aria-label="Открыть очередь">☷</button></div>
+          <div class="player-source-label" id="player-source-label">BamBook · YouTube Music</div>
+          <div class="player-visual" id="player-visual"><img id="player-artwork" alt="Обложка альбома" /><div id="youtube-player" class="youtube-player"></div><span class="player-image-fallback">♫</span></div>
+          <div class="now-playing-copy"><div><h2 id="player-title-full">Выбери трек</h2><p id="player-artist-full">Твоя музыка</p></div><button id="player-save" type="button" aria-label="Сохранить в библиотеку">＋</button></div>
+          <div class="player-progress"><input id="player-seek" type="range" min="0" max="1000" value="0" aria-label="Позиция воспроизведения" /><div><time id="player-elapsed">0:00</time><time id="player-remaining">−0:00</time></div></div>
+          <div class="player-main-controls"><button id="player-shuffle" type="button" aria-label="Перемешать очередь" aria-pressed="false">⤨</button><button id="player-prev-full" type="button" aria-label="Предыдущий трек">⏮</button><button id="player-toggle" class="player-toggle" type="button" aria-label="Воспроизвести">▶</button><button id="player-next-full" type="button" aria-label="Следующий трек">⏭</button><button id="player-queue-full" type="button" aria-label="Очередь">☷</button></div>
+          <label class="player-volume"><span>◖</span><input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Громкость" /><span>◗</span></label>
+          <div class="player-footer"><span id="player-footer-source">Официальный плеер YouTube</span><span id="player-footer-count">0 треков в очереди</span></div>
+        </div>
+      </section>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </main>
 

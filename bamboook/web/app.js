@@ -18,7 +18,7 @@
   const playlistTracksView = document.querySelector("#playlist-tracks");
   const miniPlayer = document.querySelector("#mini-player");
   const audioPlayer = document.querySelector("#audio-player");
-  const servicePlayer = document.querySelector("#service-player");
+  const playerOverlay = document.querySelector("#player-overlay");
   const pageTitle = document.querySelector("#page-title");
   const pageDescription = document.querySelector("#page-description");
   let currentView = "search";
@@ -33,11 +33,17 @@
   let shuffleEnabled = false;
   let toastTimer;
   let currentAudioObjectUrl = "";
+  let currentPlayingTrack = null;
+  let activePlayerSource = "";
+  let youtubePlayer = null;
+  let pendingYoutubeId = "";
+  let youtubeApiReady = Boolean(window.YT?.Player);
+  let progressTimer = 0;
 
   function applyTheme() {
     const theme = tg?.colorScheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.body.dataset.theme = theme;
-    const color = theme === "dark" ? "#101810" : "#d9f39e";
+    const color = theme === "dark" ? "#202820" : "#e9dfc7";
     document.querySelector('meta[name="theme-color"]').content = color;
     tg?.setHeaderColor?.(color);
     tg?.setBackgroundColor?.(color);
@@ -83,34 +89,18 @@
     } catch { return ""; }
   }
 
-  function safePreview(value) {
-    try {
-      const url = new URL(value);
-      const host = url.hostname.toLowerCase();
-      return url.protocol === "https:" && (host.endsWith(".itunes.apple.com") || host.endsWith(".mzstatic.com")) ? url.href : "";
-    } catch { return ""; }
-  }
-
-  function safeSoundCloud(value) {
-    const safe = safeLink(value);
-    if (!safe) return "";
-    const host = new URL(safe).hostname.toLowerCase();
-    return host === "soundcloud.com" || host.endsWith(".soundcloud.com") ? safe : "";
-  }
-
   function bookmarkIcon() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>';
   }
 
   function card(track, index, { kind = "search", playlistId = null } = {}) {
     const art = safeLink(track.artwork);
-    const hasPreview = Boolean(safePreview(track.preview_url));
     const hasFullAudio = /^\d{1,12}$/.test(String(track.jamendo_id || ""));
     const hasYoutube = /^[A-Za-z0-9_-]{6,20}$/.test(track.youtube_id || "");
-    const hasSoundCloud = Boolean(safeSoundCloud(track.soundcloud_url));
-    const canPlay = hasFullAudio || hasPreview || hasYoutube || hasSoundCloud;
-    const playLabel = hasFullAudio ? "▶ Полный трек" : hasSoundCloud ? "▶ SoundCloud" : hasYoutube ? "▶ YouTube" : hasPreview ? "▶ Превью" : "Нет аудио";
-    const play = `<button class="preview-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
+    const canPlay = hasFullAudio || hasYoutube;
+    const playLabel = hasYoutube ? "▶ Слушать" : hasFullAudio ? "▶ Полный трек" : "Нет аудио";
+    const sources = (Array.isArray(track.sources) ? track.sources : [track.source]).filter(Boolean).slice(0, 3);
+    const play = `<button class="play-track-button" data-play-kind="${kind}" data-play-index="${index}" type="button" ${canPlay ? "" : "disabled"}>${playLabel}</button>`;
     let action = "";
     if (kind === "search") {
       const options = playlists.map((item) => `<option value="${Number(item.id)}">${escapeHTML(item.name)}</option>`).join("");
@@ -124,7 +114,7 @@
       <div class="cover" aria-hidden="true">♫${art ? `<img class="cover-art" src="${escapeHTML(art)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
       <div class="track-info"><strong class="track-title">${escapeHTML(track.title)}</strong>
       <span class="track-meta">${escapeHTML(track.artist)}${track.album ? ` · ${escapeHTML(track.album)}` : ""}</span>
-      <div class="track-extra">${track.duration ? `<span class="duration">${escapeHTML(track.duration)}</span>` : ""}</div><div class="track-tools">${play}${action}</div></div></article>`;
+      <div class="track-extra">${track.duration ? `<span class="duration">${escapeHTML(track.duration)}</span>` : ""}${sources.map((source) => `<span class="source-badge">${escapeHTML(source)}</span>`).join("")}</div><div class="track-tools">${play}${action}</div></div></article>`;
   }
 
   function pluralTracks(count) {
@@ -275,67 +265,148 @@
     } catch (error) { showToast(error.message); }
   }
 
+  function openPlayer() {
+    if (!currentPlayingTrack) return;
+    playerOverlay.classList.remove("hidden");
+    document.body.classList.add("player-expanded");
+    if (activePlayerSource === "youtube") youtubePlayer?.playVideo?.();
+  }
+
+  function closePlayer() {
+    playerOverlay.classList.add("hidden");
+    document.body.classList.remove("player-expanded");
+    // The official YouTube video remains visible while it plays. Closing the
+    // full player pauses it instead of leaving a hidden video running.
+    if (activePlayerSource === "youtube") youtubePlayer?.pauseVideo?.();
+  }
+
+  function showPlayerArtwork(track, video = false) {
+    const art = safeLink(track?.artwork);
+    const cover = document.querySelector("#player-artwork");
+    const miniCover = document.querySelector("#mini-artwork");
+    const backdrop = document.querySelector("#player-backdrop");
+    for (const image of [cover, miniCover, backdrop]) {
+      if (art) image.src = art;
+      else image.removeAttribute("src");
+      image.classList.toggle("has-image", Boolean(art));
+    }
+    document.querySelector("#player-visual").classList.toggle("youtube-active", video);
+  }
+
+  function togglePlayback() {
+    if (activePlayerSource === "youtube" && youtubePlayer) {
+      const state = youtubePlayer.getPlayerState?.();
+      if (state === window.YT?.PlayerState?.PLAYING) youtubePlayer.pauseVideo();
+      else { openPlayer(); youtubePlayer.playVideo(); }
+      return;
+    }
+    if (audioPlayer.paused) audioPlayer.play().catch(() => showToast("Нажми воспроизведение, чтобы начать"));
+    else audioPlayer.pause();
+  }
+
+  function updatePlayButtons(playing) {
+    const symbol = playing ? "Ⅱ" : "▶";
+    document.querySelector("#player-toggle").textContent = symbol;
+    document.querySelector("#player-toggle").setAttribute("aria-label", playing ? "Приостановить" : "Воспроизвести");
+    document.querySelector("#player-toggle-mini").textContent = symbol;
+    document.querySelector("#player-toggle-mini").setAttribute("aria-label", playing ? "Приостановить" : "Воспроизвести");
+  }
+
+  function formatTime(value) {
+    const seconds = Math.max(0, Math.floor(Number(value) || 0));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function updateProgress() {
+    let current = 0, duration = 0;
+    if (activePlayerSource === "youtube" && youtubePlayer?.getDuration) {
+      current = youtubePlayer.getCurrentTime?.() || 0;
+      duration = youtubePlayer.getDuration?.() || 0;
+    } else if (activePlayerSource === "audio") {
+      current = audioPlayer.currentTime || 0;
+      duration = audioPlayer.duration || 0;
+    }
+    const seek = document.querySelector("#player-seek");
+    seek.value = String(duration ? Math.round(current / duration * 1000) : 0);
+    document.querySelector("#player-elapsed").textContent = formatTime(current);
+    document.querySelector("#player-remaining").textContent = `−${formatTime(Math.max(0, duration - current))}`;
+  }
+
+  function loadYoutubePlayer(videoId) {
+    pendingYoutubeId = videoId;
+    if (!youtubeApiReady || !window.YT?.Player) return;
+    if (youtubePlayer) {
+      youtubePlayer.loadVideoById(videoId);
+      return;
+    }
+    youtubePlayer = new window.YT.Player("youtube-player", {
+      width: "100%", height: "100%", videoId,
+      playerVars: { autoplay: 1, controls: 1, playsinline: 1, rel: 0, enablejsapi: 1 },
+      events: {
+        onReady: (event) => { event.target.setVolume(Number(document.querySelector("#player-volume").value)); if (playerOverlay.classList.contains("hidden")) event.target.pauseVideo(); else event.target.playVideo(); updateProgress(); },
+        onStateChange: (event) => {
+          const state = event.data;
+          updatePlayButtons(state === window.YT.PlayerState.PLAYING);
+          if (state === window.YT.PlayerState.ENDED && queueIndex >= 0) playNext(1);
+        },
+        onError: () => showToast("YouTube не разрешает встроенное воспроизведение этого видео. Выбери другой результат."),
+      },
+    });
+  }
+
+  window.addEventListener("bambook:youtube-ready", () => {
+    youtubeApiReady = Boolean(window.YT?.Player);
+    if (pendingYoutubeId && youtubeApiReady) loadYoutubePlayer(pendingYoutubeId);
+  });
+
   async function playTrack(track) {
-    const preview = safePreview(track?.preview_url);
     const jamendoId = /^\d{1,12}$/.test(String(track?.jamendo_id || "")) ? String(track.jamendo_id) : "";
     const youtubeId = /^[A-Za-z0-9_-]{6,20}$/.test(track?.youtube_id || "") ? track.youtube_id : "";
-    const soundcloudUrl = safeSoundCloud(track?.soundcloud_url);
-    if (!preview && !jamendoId && !youtubeId && !soundcloudUrl) { showToast("Для этого результата нет доступного плеера"); return; }
+    if (!jamendoId && !youtubeId) { showToast("Для этого результата нет доступного плеера"); return; }
+    currentPlayingTrack = track;
+    const video = Boolean(youtubeId);
+    activePlayerSource = video ? "youtube" : "audio";
     document.querySelector("#player-title").textContent = track.title;
     document.querySelector("#player-artist").textContent = track.artist;
+    document.querySelector("#player-title-full").textContent = track.title;
+    document.querySelector("#player-artist-full").textContent = track.artist;
+    const sources = Array.isArray(track.sources) ? track.sources : String(track.source || "").split(" · ");
+    const provider = video ? (sources.includes("YouTube Music") ? "YouTube Music" : "YouTube") : "Jamendo";
+    const attribution = sources.includes("Spotify") ? `Spotify · ${provider}` : provider;
+    document.querySelector("#player-source-label").textContent = `СЕЙЧАС ИГРАЕТ · ${attribution}`;
+    document.querySelector("#player-save").disabled = !track.url;
+    document.querySelector("#player-footer-source").textContent = video ? "Официальный видеоплеер YouTube" : "Полный трек · Jamendo";
+    showPlayerArtwork(track, video);
     miniPlayer.classList.add("active");
+    openPlayer();
     audioPlayer.pause();
-    if (currentAudioObjectUrl) {
-      URL.revokeObjectURL(currentAudioObjectUrl);
-      currentAudioObjectUrl = "";
+    audioPlayer.removeAttribute("src");
+    audioPlayer.load();
+    updatePlayButtons(false);
+    if (currentAudioObjectUrl) { URL.revokeObjectURL(currentAudioObjectUrl); currentAudioObjectUrl = ""; }
+    clearInterval(progressTimer);
+    if (video) {
+      loadYoutubePlayer(youtubeId);
+      if (!youtubeApiReady) showToast("Открываю официальный YouTube-плеер…");
+      progressTimer = setInterval(updateProgress, 500);
+      return;
     }
-    audioPlayer.classList.remove("hidden");
-    servicePlayer.src = "about:blank";
-    servicePlayer.classList.add("hidden");
-    miniPlayer.classList.remove("embed-active");
-    if (!jamendoId && (soundcloudUrl || youtubeId)) {
-      audioPlayer.removeAttribute("src");
-      audioPlayer.load();
-      audioPlayer.classList.add("hidden");
-      servicePlayer.classList.remove("hidden");
-      miniPlayer.classList.add("embed-active");
-      if (soundcloudUrl) {
-        const params = new URLSearchParams({ url: soundcloudUrl, auto_play: "true", show_artwork: "true", show_user: "true", show_comments: "false", sharing: "false", download: "false", color: "94d82d" });
-        servicePlayer.title = "SoundCloud · " + track.title;
-        servicePlayer.src = `https://w.soundcloud.com/player/?${params.toString()}`;
-        miniPlayer.classList.remove("video-player");
-      } else {
-        servicePlayer.title = "YouTube · " + track.title;
-        servicePlayer.src = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&controls=1&playsinline=1&rel=0`;
-        miniPlayer.classList.add("video-player");
+    if (youtubePlayer) youtubePlayer.pauseVideo();
+    showToast("Загружаю полный трек…");
+    try {
+      const response = await fetch("/api/action", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "play_jamendo", jamendoId, initData }),
+      });
+      if (!response.ok) {
+        let message = "Не удалось загрузить аудио";
+        try { message = (await response.json()).error || message; } catch {}
+        throw new Error(message);
       }
-    } else if (jamendoId) {
-      miniPlayer.classList.remove("video-player");
-      audioPlayer.removeAttribute("src");
-      audioPlayer.load();
-      showToast("Загружаю полный трек…");
-      try {
-        const response = await fetch("/api/action", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "play_jamendo", jamendoId, initData }),
-        });
-        if (!response.ok) {
-          let message = "Не удалось загрузить аудио";
-          try { message = (await response.json()).error || message; } catch {}
-          throw new Error(message);
-        }
-        currentAudioObjectUrl = URL.createObjectURL(await response.blob());
-        audioPlayer.src = currentAudioObjectUrl;
-        await audioPlayer.play();
-      } catch (error) {
-        showToast(error.message || "Не удалось загрузить полный трек");
-      }
-    } else {
-      miniPlayer.classList.remove("video-player");
-      audioPlayer.src = preview;
-      audioPlayer.play().catch(() => showToast("Нажми ▶ в плеере, чтобы начать прослушивание"));
-    }
+      currentAudioObjectUrl = URL.createObjectURL(await response.blob());
+      audioPlayer.src = currentAudioObjectUrl;
+      await audioPlayer.play();
+    } catch (error) { showToast(error.message || "Не удалось загрузить полный трек"); }
   }
 
   const queueStorageKey = `bambook-queue-${user?.id || "guest"}`;
@@ -356,6 +427,8 @@
     empty.classList.toggle("hidden", playQueue.length > 0);
     list.innerHTML = playQueue.map((track, index) => `<li class="queue-item ${index === queueIndex ? "is-current" : ""}"><button class="queue-play" data-queue-play="${index}" type="button"><span class="queue-number">${index === queueIndex ? "♫" : index + 1}</span><span><strong>${escapeHTML(track.title)}</strong><small>${escapeHTML(track.artist)}</small></span></button><span class="queue-item-actions"><button type="button" data-queue-move="${index}" data-direction="-1" aria-label="Переместить выше" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-queue-move="${index}" data-direction="1" aria-label="Переместить ниже" ${index === playQueue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-queue-remove="${index}" aria-label="Убрать из очереди">×</button></span></li>`).join("");
     document.querySelector("#shuffle-button").setAttribute("aria-pressed", String(shuffleEnabled));
+    document.querySelector("#player-shuffle").setAttribute("aria-pressed", String(shuffleEnabled));
+    document.querySelector("#player-footer-count").textContent = `${playQueue.length} треков в очереди`;
   }
 
   function addToQueue(track, playNow = false) {
@@ -391,7 +464,7 @@
       const seen = new Set();
       const tracks = batches.flatMap((batch) => batch.tracks || []).filter((track) => {
         const key = `${track.artist} ${track.title}`.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-        if (!key || seen.has(key) || !(track.jamendo_id || safePreview(track.preview_url) || track.youtube_id || safeSoundCloud(track.soundcloud_url))) return false;
+        if (!key || seen.has(key) || !(track.jamendo_id || track.youtube_id)) return false;
         seen.add(key); return true;
       }).slice(0, 18);
       if (!tracks.length) { showToast("Не нашёл доступных для плеера треков. Попробуй другой вайб."); return; }
@@ -414,12 +487,45 @@
   }
 
   renderQueue();
+  audioPlayer.volume = Number(document.querySelector("#player-volume").value) / 100;
   audioPlayer.addEventListener("ended", () => { if (queueIndex >= 0) playNext(1); });
+  audioPlayer.addEventListener("timeupdate", updateProgress);
+  audioPlayer.addEventListener("loadedmetadata", updateProgress);
+  audioPlayer.addEventListener("play", () => updatePlayButtons(true));
+  audioPlayer.addEventListener("pause", () => updatePlayButtons(false));
   document.querySelector("#player-next").addEventListener("click", () => playNext(1));
   document.querySelector("#player-prev").addEventListener("click", () => playNext(-1));
-  document.querySelector("#player-queue").addEventListener("click", () => setView("radio"));
+  document.querySelector("#player-queue").addEventListener("click", () => { if (activePlayerSource === "youtube") closePlayer(); setView("radio"); });
   document.querySelector("#shuffle-button").addEventListener("click", shuffleQueue);
-  document.querySelector("#clear-queue").addEventListener("click", () => { playQueue = []; queueIndex = -1; persistQueue(); audioPlayer.pause(); servicePlayer.src = "about:blank"; showToast("Очередь очищена"); });
+  document.querySelector("#player-open").addEventListener("click", openPlayer);
+  document.querySelector("#player-close").addEventListener("click", closePlayer);
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !playerOverlay.classList.contains("hidden")) closePlayer(); });
+  document.querySelector("#player-toggle").addEventListener("click", togglePlayback);
+  document.querySelector("#player-toggle-mini").addEventListener("click", togglePlayback);
+  document.querySelector("#player-next-full").addEventListener("click", () => playNext(1));
+  document.querySelector("#player-prev-full").addEventListener("click", () => playNext(-1));
+  document.querySelector("#player-shuffle").addEventListener("click", shuffleQueue);
+  document.querySelector("#player-open-queue").addEventListener("click", () => { closePlayer(); setView("radio"); });
+  document.querySelector("#player-queue-full").addEventListener("click", () => { closePlayer(); setView("radio"); });
+  document.querySelector("#player-seek").addEventListener("change", (event) => {
+    const position = Number(event.target.value) / 1000;
+    if (activePlayerSource === "youtube" && youtubePlayer?.getDuration) youtubePlayer.seekTo(youtubePlayer.getDuration() * position, true);
+    else if (activePlayerSource === "audio" && audioPlayer.duration) audioPlayer.currentTime = audioPlayer.duration * position;
+  });
+  document.querySelector("#player-volume").addEventListener("input", (event) => {
+    const level = Number(event.target.value);
+    audioPlayer.volume = level / 100;
+    youtubePlayer?.setVolume?.(level);
+  });
+  document.querySelector("#player-save").addEventListener("click", async () => {
+    if (!currentPlayingTrack) return;
+    try {
+      const result = await api("save", { track: currentPlayingTrack });
+      showToast(result.saved ? "Трек добавлен в библиотеку" : "Уже сохранён");
+      await loadLibrary();
+    } catch (error) { showToast(error.message); }
+  });
+  document.querySelector("#clear-queue").addEventListener("click", () => { playQueue = []; queueIndex = -1; persistQueue(); audioPlayer.pause(); youtubePlayer?.pauseVideo?.(); closePlayer(); showToast("Очередь очищена"); });
   document.querySelectorAll("#radio-form, #radio-form-page").forEach((radioForm) => radioForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const prompt = radioForm.querySelector("input").value;
@@ -467,7 +573,7 @@
     const queueRemove = event.target.closest("[data-queue-remove]");
     if (queueRemove) {
       const index = Number(queueRemove.dataset.queueRemove); playQueue.splice(index, 1);
-      if (index < queueIndex) queueIndex--; else if (index === queueIndex) { queueIndex = -1; if (playQueue.length) playQueueAt(Math.min(index, playQueue.length - 1)); else { audioPlayer.pause(); servicePlayer.src = "about:blank"; } }
+      if (index < queueIndex) queueIndex--; else if (index === queueIndex) { queueIndex = -1; if (playQueue.length) playQueueAt(Math.min(index, playQueue.length - 1)); else { audioPlayer.pause(); youtubePlayer?.pauseVideo?.(); } }
       persistQueue(); return;
     }
     const openPlaylistButton = event.target.closest("[data-open-playlist]");
