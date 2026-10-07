@@ -28,6 +28,15 @@ class Library:
                     saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(user_id, url)
                 );
+                CREATE TABLE IF NOT EXISTS telegram_audio_cache (
+                    source TEXT NOT NULL,
+                    source_track_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    performer TEXT NOT NULL,
+                    telegram_file_id TEXT NOT NULL,
+                    cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(source, source_track_id)
+                );
                 CREATE TABLE IF NOT EXISTS imports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -98,6 +107,32 @@ class Library:
         db = sqlite3.connect(self.path)
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def get_cached_audio(self, source: str, source_track_id: str) -> tuple[str, str, str] | None:
+        """Return this bot's reusable Telegram file_id and audio metadata."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT telegram_file_id,title,performer FROM telegram_audio_cache WHERE source=? AND source_track_id=?",
+                (source[:40], source_track_id[:100]),
+            ).fetchone()
+        return (str(row[0]), str(row[1]), str(row[2])) if row else None
+
+    def cache_audio(self, source: str, source_track_id: str, title: str, performer: str, file_id: str) -> None:
+        if not source or not source_track_id or not file_id:
+            raise ValueError("Audio cache requires a source, track ID, and Telegram file_id")
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO telegram_audio_cache(source,source_track_id,title,performer,telegram_file_id) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(source,source_track_id) DO UPDATE SET title=excluded.title,performer=excluded.performer,telegram_file_id=excluded.telegram_file_id,cached_at=CURRENT_TIMESTAMP",
+                (source[:40], source_track_id[:100], title[:200], performer[:200], file_id[:1024]),
+            )
+
+    def remove_cached_audio(self, source: str, source_track_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM telegram_audio_cache WHERE source=? AND source_track_id=?",
+                (source[:40], source_track_id[:100]),
+            )
 
     def is_premium(self, user_id: int, now: int | None = None) -> bool:
         current = int(time.time()) if now is None else now
